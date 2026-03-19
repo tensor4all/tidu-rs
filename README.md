@@ -1,7 +1,10 @@
 # tidu-rs
 
-`tidu-rs` is a tape-based automatic-differentiation engine for the tensor4all
-ecosystem.
+`tidu-rs` is a general-purpose, tape-based automatic-differentiation engine.
+
+It originated in the tensor4all stack, but it is designed to work with any
+downstream differentiable value type that implements the core AD traits from
+[`chainrules-rs`](https://github.com/tensor4all/chainrules-rs).
 
 The name **tidu** comes from the Chinese word **梯度**, written in pinyin as
 **tī dù**, meaning "gradient".

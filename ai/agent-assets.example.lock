@@ -1,0 +1,20 @@
+{
+  "source_repo": "tensor4all/template-rs",
+  "source_ref": "main",
+  "bundle_revision": "0123456789abcdef0123456789abcdef01234567",
+  "synced_at": "2026-03-08T00:00:00Z",
+  "assets": {
+    "manifest": {
+      "path": "ai/manifest.json",
+      "sha256": "example"
+    },
+    "common-agent-rules": {
+      "path": "ai/vendor/template-rs/common-agent-rules.md",
+      "sha256": "example"
+    },
+    "createpr-command": {
+      "path": ".claude/commands/createpr.md",
+      "sha256": "example"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/tidu"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Hiroshi Shinaoka <h.shinaoka@gmail.com>", "GiggleLiu <cacate0129@gmail.com>"]
+publish = false
+
+[workspace.dependencies]
+chainrules-core = { git = "https://github.com/tensor4all/chainrules-rs", rev = "b1a17ae458bfd9f8976a12d7302c6abd3db31048" }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "New Tensor4all Rust Repo"
+  short_description: "Bootstrap tensor4all Rust repositories"
+  default_prompt: "Use $new-tensor4all-rust-repo to create a new tensor4all Rust repository from template-rs."

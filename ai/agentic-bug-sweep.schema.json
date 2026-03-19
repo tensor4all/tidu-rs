@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "report_path": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string",
+      "enum": ["create", "update", "merge", "none"]
+    },
+    "issue": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["title", "body", "labels"]
+    },
+    "canonical_issue_number": {
+      "type": ["integer", "null"]
+    },
+    "related_issue_numbers": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "duplicates_to_close": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "duplicate_comment": {
+      "type": ["string", "null"]
+    },
+    "issue_comment": {
+      "type": ["string", "null"]
+    },
+    "related_comment": {
+      "type": ["string", "null"]
+    }
+  },
+  "required": [
+    "summary",
+    "report_path",
+    "action",
+    "issue",
+    "canonical_issue_number",
+    "related_issue_numbers",
+    "duplicates_to_close",
+    "duplicate_comment",
+    "issue_comment",
+    "related_comment"
+  ]
+}

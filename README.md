@@ -46,3 +46,12 @@ cargo doc --workspace --no-deps
 Use `bash ai/run-codex-solve-bug.sh` or `bash ai/run-claude-solve-bug.sh` when
 you want a headless agent to pick one actionable bug or bug-like issue, fix it,
 and drive the repository-local PR workflow.
+
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](./LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](./LICENSE-MIT))
+
+at your option.

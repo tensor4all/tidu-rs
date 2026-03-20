@@ -14,33 +14,39 @@ use crate::{AdResult, AutodiffError, Differentiable, HvpResult, NodeId, ReverseR
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use tidu::Tape;
-/// use std::sync::{Arc, Mutex};
-/// use tenferro_algebra::Standard;
-/// use tenferro_device::LogicalMemorySpace;
-/// use tenferro_einsum::tracked_einsum;
-/// use tenferro_prims::{CpuBackend, CpuContext};
-/// use tenferro_tensor::{MemoryOrder, Tensor};
+/// ```rust
+/// use chainrules::powf_rrule;
+/// use tidu::{AdResult, NodeId, ReverseRule, Tape};
 ///
-/// let tape = Tape::<Tensor<f64>>::new();
-/// let ctx = Arc::new(Mutex::new(CpuContext::new(1)));
-/// let a = tape.leaf(Tensor::ones(
-///     &[2, 3],
-///     LogicalMemorySpace::MainMemory,
-///     MemoryOrder::ColumnMajor,
-/// ));
-/// let b = tape.leaf(Tensor::ones(
-///     &[3, 4],
-///     LogicalMemorySpace::MainMemory,
-///     MemoryOrder::ColumnMajor,
-/// ));
-/// let c =
-///     tracked_einsum::<Standard<f64>, CpuBackend>(ctx.clone(), "ij,jk->ik", &[&a, &b]).unwrap();
-/// let loss =
-///     tracked_einsum::<Standard<f64>, CpuBackend>(ctx.clone(), "ij,ij->", &[&c, &c]).unwrap();
-/// let grads = tape.pullback(&loss).unwrap();
-/// let _ga = grads.get(a.node_id().unwrap()).unwrap();
+/// struct PowfRule {
+///     input: NodeId,
+///     x: f64,
+///     exponent: f64,
+/// }
+///
+/// impl ReverseRule<f64> for PowfRule {
+///     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
+///         Ok(vec![(self.input, powf_rrule(self.x, self.exponent, *cotangent))])
+///     }
+///
+///     fn inputs(&self) -> Vec<NodeId> {
+///         vec![self.input]
+///     }
+/// }
+///
+/// let tape = Tape::<f64>::new();
+/// let x = tape.leaf(2.0);
+/// let y = tape.record_op(
+///     8.0,
+///     Box::new(PowfRule {
+///         input: x.node_id().unwrap(),
+///         x: 2.0,
+///         exponent: 3.0,
+///     }),
+///     None,
+/// );
+/// let grads = tape.pullback(&y).unwrap();
+/// assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0);
 /// ```
 pub struct Tape<V: Differentiable> {
     inner: Arc<Mutex<AutogradGraph<V>>>,

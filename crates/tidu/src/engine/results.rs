@@ -171,26 +171,51 @@ impl<V: Differentiable> PullbackPlan<V> {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use tidu::{HvpResult, Tape};
-/// use std::sync::{Arc, Mutex};
-/// use tenferro_algebra::Standard;
-/// use tenferro_device::LogicalMemorySpace;
-/// use tenferro_einsum::tracked_einsum;
-/// use tenferro_prims::{CpuBackend, CpuContext};
-/// use tenferro_tensor::{MemoryOrder, Tensor};
+/// ```rust
+/// use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
 ///
-/// let tape = Tape::<Tensor<f64>>::new();
-/// let ctx = Arc::new(Mutex::new(CpuContext::new(1)));
-/// let x = tape.leaf_with_tangent(
-///     Tensor::ones(&[3], LogicalMemorySpace::MainMemory, MemoryOrder::ColumnMajor),
-///     Tensor::ones(&[3], LogicalMemorySpace::MainMemory, MemoryOrder::ColumnMajor),
-/// ).unwrap();
-/// let loss =
-///     tracked_einsum::<Standard<f64>, CpuBackend>(ctx, "i,i->", &[&x, &x]).unwrap();
-/// let result: HvpResult<Tensor<f64>> = tape.hvp(&loss).unwrap();
-/// let _grad = result.gradients.get(x.node_id().unwrap());
-/// let _hv = result.hvp.get(x.node_id().unwrap());
+/// struct SquareRuleHvp {
+///     input: NodeId,
+///     x: f64,
+///     dx: f64,
+/// }
+///
+/// impl ReverseRule<f64> for SquareRuleHvp {
+///     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
+///         Ok(vec![(self.input, 2.0 * self.x * *cotangent)])
+///     }
+///
+///     fn inputs(&self) -> Vec<NodeId> {
+///         vec![self.input]
+///     }
+///
+///     fn pullback_with_tangents(
+///         &self,
+///         cotangent: &f64,
+///         cotangent_tangent: &f64,
+///     ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+///         Ok(vec![(
+///             self.input,
+///             2.0 * self.x * *cotangent,
+///             2.0 * self.dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
+///         )])
+///     }
+/// }
+///
+/// let tape = Tape::<f64>::new();
+/// let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+/// let y = tape.record_op(
+///     9.0,
+///     Box::new(SquareRuleHvp {
+///         input: x.node_id().unwrap(),
+///         x: 3.0,
+///         dx: 1.0,
+///     }),
+///     None,
+/// );
+/// let result: HvpResult<f64> = tape.hvp(&y).unwrap();
+/// assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
+/// assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
 /// ```
 pub struct HvpResult<V: Differentiable> {
     /// Gradients.

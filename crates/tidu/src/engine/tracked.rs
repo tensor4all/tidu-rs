@@ -5,18 +5,13 @@ use crate::{Differentiable, NodeId};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use tidu::Tape;
-/// use tenferro_device::LogicalMemorySpace;
-/// use tenferro_tensor::{MemoryOrder, Tensor};
 ///
-/// let tape = Tape::<Tensor<f64>>::new();
-/// let a = tape.leaf(Tensor::ones(
-///     &[2, 3],
-///     LogicalMemorySpace::MainMemory,
-///     MemoryOrder::ColumnMajor,
-/// ));
-/// assert!(a.requires_grad());
+/// let tape = Tape::<f64>::new();
+/// let x = tape.leaf(3.0);
+/// assert!(x.requires_grad());
+/// assert_eq!(*x.value(), 3.0);
 /// ```
 pub struct TrackedValue<V: Differentiable> {
     pub(crate) value: V,

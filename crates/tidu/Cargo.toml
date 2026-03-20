@@ -9,3 +9,4 @@ description = "Tape-based automatic-differentiation engine built on chainrules-c
 
 [dependencies]
 chainrules-core.workspace = true
+chainrules.workspace = true

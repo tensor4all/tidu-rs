@@ -9,6 +9,23 @@ downstream differentiable value type that implements the core AD traits from
 The name **tidu** comes from the Chinese word **梯度**, written in pinyin as
 **tī dù**, meaning "gradient".
 
+## Getting Started
+
+Add `tidu` and its companion crate `chainrules` (which provides scalar
+differentiation rules such as `powf_rrule` and `sin_frule`) to your
+`Cargo.toml`:
+
+```toml
+[dependencies]
+tidu       = { git = "https://github.com/tensor4all/tidu-rs" }
+chainrules = { git = "https://github.com/tensor4all/chainrules-rs" }
+```
+
+`tidu` re-exports the core traits (`Differentiable`, `ReverseRule`, `NodeId`,
+etc.) from `chainrules-core`, so you only need to import `chainrules`
+explicitly when you use its scalar rule helpers (e.g. `powf_rrule`,
+`powf_frule`).
+
 ## What Lives Here
 
 - `tidu`: reverse-mode tape execution and dual-number forward mode

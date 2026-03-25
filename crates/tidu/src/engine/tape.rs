@@ -143,6 +143,12 @@ impl<V: Differentiable> Tape<V> {
     }
 
     /// Records an operation on the tape, returning a tracked output.
+    ///
+    /// - `output_value`: the pre-computed forward result of the operation.
+    /// - `rule`: the reverse rule used during pullback.
+    /// - `output_tangent`: optional tangent of the output, only needed for
+    ///   HVP (forward-over-reverse) computation. Pass `None` for standard
+    ///   gradient computation.
     pub fn record_op(
         &self,
         output_value: V,
@@ -165,6 +171,12 @@ impl<V: Differentiable> Tape<V> {
     }
 
     /// Runs reverse-mode pullback from a scalar loss value.
+    ///
+    /// The loss must satisfy `num_elements() == 1`; for non-scalar outputs use
+    /// [`pullback_with_seed`](Self::pullback_with_seed) with an explicit
+    /// cotangent seed instead.
+    ///
+    /// Only leaf-node gradients are stored in the returned [`Gradients`].
     pub fn pullback(&self, loss: &TrackedValue<V>) -> AdResult<Gradients<V>> {
         let n = loss.value.num_elements();
         if n != 1 {
@@ -174,6 +186,11 @@ impl<V: Differentiable> Tape<V> {
     }
 
     /// Runs reverse-mode pullback from an arbitrary output cotangent seed.
+    ///
+    /// Use this instead of [`pullback`](Self::pullback) when the output is
+    /// non-scalar or when you need a custom seed direction.
+    ///
+    /// Only leaf-node gradients are stored in the returned [`Gradients`].
     pub fn pullback_with_seed(
         &self,
         output: &TrackedValue<V>,

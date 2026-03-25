@@ -98,6 +98,17 @@ impl<V: Differentiable> Default for Gradients<V> {
     }
 }
 
+impl<V: Differentiable> std::fmt::Debug for Gradients<V>
+where
+    V::Tangent: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gradients")
+            .field("entries", &self.entries)
+            .finish()
+    }
+}
+
 /// Compiled pullback execution plan.
 ///
 /// # Examples

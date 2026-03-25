@@ -4,6 +4,26 @@
 //! generic over the differentiable value type, so the same tape can power
 //! scalar examples, tensor engines, or downstream custom value types.
 //!
+//! ## How it works
+//!
+//! Unlike eager-mode AD frameworks (e.g. PyTorch autograd), `tidu` is a
+//! **low-level AD engine**: you compute forward values yourself and register
+//! reverse rules on the tape. The tape then runs reverse-mode pullback to
+//! accumulate gradients. This design keeps the engine generic — the same tape
+//! works for scalars, tensors, or any custom type that implements
+//! [`Differentiable`].
+//!
+//! **Companion crate:** The doc examples below import scalar rule helpers
+//! (e.g. `powf_rrule`, `powf_frule`) from the
+//! [`chainrules`](https://github.com/tensor4all/chainrules-rs) crate.
+//! Add it alongside `tidu` in your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! tidu       = { git = "https://github.com/tensor4all/tidu-rs" }
+//! chainrules = { git = "https://github.com/tensor4all/chainrules-rs" }
+//! ```
+//!
 //! ## Table of Contents
 //! - [Scalar Reverse Mode](#scalar-reverse-mode)
 //! - [Scalar Forward Mode](#scalar-forward-mode)
@@ -15,6 +35,8 @@
 //! use chainrules::powf_rrule;
 //! use tidu::{AdResult, NodeId, ReverseRule, Tape};
 //!
+//! // Define a reverse rule for f(x) = x^exponent.
+//! // The rule stores the values it needs for the backward pass.
 //! struct PowfRule {
 //!     input: NodeId,
 //!     x: f64,
@@ -31,27 +53,42 @@
 //!     }
 //! }
 //!
+//! // Create a tape and register x = 2.0 as a leaf (input requiring gradient).
 //! let tape = Tape::<f64>::new();
 //! let x = tape.leaf(2.0);
+//!
+//! // Record y = x^3 = 8.0 with its reverse rule.
+//! // The first argument is the pre-computed forward value.
+//! // The third argument is an optional output tangent (only needed for HVP).
 //! let y = tape.record_op(
-//!     8.0,
+//!     8.0, // forward value: 2.0^3.0
 //!     Box::new(PowfRule {
 //!         input: x.node_id().unwrap(),
 //!         x: 2.0,
 //!         exponent: 3.0,
 //!     }),
-//!     None,
+//!     None, // no output tangent (only needed for HVP)
 //! );
+//!
+//! // Run reverse-mode pullback: dy/dx = 3 * 2^2 = 12.
 //! let grads = tape.pullback(&y).unwrap();
 //! assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0);
 //! ```
 //!
 //! ## Scalar Forward Mode
+//!
+//! Forward mode propagates tangents (directional derivatives) alongside
+//! the primal computation. Use [`DualValue`] to pair a value with its
+//! tangent, then pass them through `_frule` helpers from `chainrules`.
+//!
 //! ```rust
 //! use chainrules::powf_frule;
 //! use tidu::DualValue;
 //!
+//! // Create x = 2.0 with tangent dx = 1.0 (i.e. d/dx).
 //! let x = DualValue::with_tangent(2.0_f64, 1.0_f64).unwrap();
+//!
+//! // Compute y = x^3 and its derivative dy = 3*x^2*dx = 12.0.
 //! let (y, dy) = powf_frule(*x.primal(), 3.0, *x.tangent().unwrap());
 //! assert_eq!(y, 8.0);
 //! assert_eq!(dy, 12.0);
@@ -59,9 +96,14 @@
 //!
 //! ## Scalar Hessian-Vector Product
 //!
-//! This example uses a `tidu`-specific `ReverseRule` with
-//! `pullback_with_tangents`, because `chainrules` exposes scalar `frule` and
-//! `rrule` helpers rather than a ready-made rule object.
+//! A Hessian-vector product (HVP) computes **H·v** — the product of the
+//! Hessian of a scalar function with a tangent direction **v** — without
+//! materialising the full Hessian matrix. `tidu` achieves this via
+//! forward-over-reverse mode.
+//!
+//! To enable HVP, implement [`ReverseRule::pullback_with_tangents`] on your
+//! rule. The default implementation returns `Err(HvpNotSupported)`, so it is
+//! only required when you need second-order derivatives.
 //!
 //! ```rust
 //! use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
@@ -69,7 +111,7 @@
 //! struct SquareRuleHvp {
 //!     input: NodeId,
 //!     x: f64,
-//!     dx: f64,
+//!     dx: f64, // tangent of x, must match the tangent passed to leaf_with_tangent
 //! }
 //!
 //! impl ReverseRule<f64> for SquareRuleHvp {
@@ -81,6 +123,10 @@
 //!         vec![self.input]
 //!     }
 //!
+//!     // Forward-over-reverse: differentiates the pullback itself.
+//!     // `cotangent` is the standard reverse-mode adjoint.
+//!     // `cotangent_tangent` is its tangent component from the forward pass.
+//!     // Returns (node, gradient, gradient_tangent) triples.
 //!     fn pullback_with_tangents(
 //!         &self,
 //!         cotangent: &f64,
@@ -95,22 +141,33 @@
 //! }
 //!
 //! let tape = Tape::<f64>::new();
+//! // Set tangent v = 1.0 on the leaf for the HVP direction.
 //! let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
 //! let y = tape.record_op(
-//!     9.0,
+//!     9.0, // forward value: 3.0^2
 //!     Box::new(SquareRuleHvp {
 //!         input: x.node_id().unwrap(),
 //!         x: 3.0,
 //!         dx: 1.0,
 //!     }),
-//!     None,
+//!     None, // no output tangent (only needed for HVP)
 //! );
 //! let result: HvpResult<f64> = tape.hvp(&y).unwrap();
+//! // Gradient: d(x^2)/dx at x=3 → 6.0
 //! assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
+//! // HVP: H·v = d²(x²)/dx² · 1.0 = 2.0
 //! assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
 //! ```
 //!
 //! ## Custom Value Type
+//!
+//! The tape is generic over any type implementing [`Differentiable`]. This
+//! example defines a simple `Vec2` and differentiates through it.
+//!
+//! **Note:** [`Tape::pullback`] requires a scalar loss (`num_elements() == 1`).
+//! For non-scalar outputs, use [`Tape::pullback_with_seed`] and supply an
+//! explicit cotangent seed.
+//!
 //! ```rust
 //! use tidu::{AdResult, Differentiable, NodeId, ReverseRule, Tape};
 //!
@@ -161,8 +218,10 @@
 //!     Box::new(ScaleByTwoRule {
 //!         input: x.node_id().unwrap(),
 //!     }),
-//!     None,
+//!     None, // no output tangent (only needed for HVP)
 //! );
+//! // Use pullback_with_seed because Vec2 is non-scalar (num_elements = 2).
+//! // pullback() would return Err(NonScalarLoss).
 //! let grads = tape.pullback_with_seed(&y, Vec2([1.0, -1.0])).unwrap();
 //! assert_eq!(
 //!     *grads.get(x.node_id().unwrap()).unwrap(),

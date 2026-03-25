@@ -1,7 +1,17 @@
 use crate::engine::Tape;
 use crate::{Differentiable, NodeId};
 
-/// Value wrapper for reverse-mode AD.
+/// A value connected to a [`Tape`] for reverse-mode AD.
+///
+/// Every `TrackedValue` holds:
+/// - the **primal value** (`V`),
+/// - an optional **node ID** linking it to the computation graph,
+/// - a reference to the **tape** that owns the graph.
+///
+/// You obtain a `TrackedValue` from [`Tape::leaf`] (input variables) or
+/// [`Tape::record_op`] (operation outputs). You can also create a
+/// **detached** value with [`TrackedValue::new`] — it carries no graph
+/// connection and will not participate in gradient computation.
 ///
 /// # Examples
 ///
@@ -22,7 +32,11 @@ pub struct TrackedValue<V: Differentiable> {
 }
 
 impl<V: Differentiable> TrackedValue<V> {
-    /// Creates a tracked value with `requires_grad = false` (no tape).
+    /// Creates a **detached** tracked value (no tape, `requires_grad = false`).
+    ///
+    /// Use this when you need a `TrackedValue` that does not participate in
+    /// gradient computation — for example, as a constant input to an
+    /// operation.
     pub fn new(value: V) -> Self {
         Self {
             value,
@@ -48,12 +62,17 @@ impl<V: Differentiable> TrackedValue<V> {
         self.requires_grad
     }
 
-    /// Returns the graph node ID when this value is connected to a tape.
+    /// Returns the graph node ID, or `None` if this value is detached.
+    ///
+    /// The `NodeId` is used to look up gradients in [`Gradients::get`].
     pub fn node_id(&self) -> Option<NodeId> {
         self.node_id
     }
 
-    /// Returns the tangent for HVP, or `None` if not set.
+    /// Returns the tangent for HVP computation, or `None` if not set.
+    ///
+    /// Tangents are set via [`Tape::leaf_with_tangent`] and specify the
+    /// direction vector **v** in the Hessian-vector product H·v.
     pub fn tangent(&self) -> Option<&V::Tangent> {
         self.tangent.as_ref()
     }
@@ -68,7 +87,11 @@ impl<V: Differentiable> TrackedValue<V> {
         self.tape.as_ref()
     }
 
-    /// Consumes and returns a detached value that does not require gradients.
+    /// Consumes and returns a detached copy that does not require gradients.
+    ///
+    /// The returned value keeps its primal but drops the tape connection,
+    /// node ID, and tangent. Use this to stop gradient flow through a value
+    /// (analogous to PyTorch's `Tensor.detach()`).
     pub fn detach(self) -> Self {
         Self {
             value: self.value,

@@ -4,6 +4,14 @@ use crate::{AdResult, AutodiffError, Differentiable, NodeId, TrackedValue};
 
 /// Accumulated gradients indexed by [`NodeId`].
 ///
+/// Returned by [`Tape::pullback`](crate::Tape::pullback) and
+/// [`Tape::pullback_with_seed`](crate::Tape::pullback_with_seed).
+///
+/// **Only leaf nodes** (created via [`Tape::leaf`](crate::Tape::leaf))
+/// appear in the result — intermediate operation nodes are not stored.
+/// Look up a specific gradient with [`Gradients::get`], or iterate over
+/// all entries with [`Gradients::entries`].
+///
 /// # Examples
 ///
 /// ```
@@ -109,12 +117,23 @@ where
     }
 }
 
-/// Compiled pullback execution plan.
+/// A pre-built pullback plan that captures the loss node.
+///
+/// Build once with [`PullbackPlan::build`], then call
+/// [`PullbackPlan::execute`] to run the pullback. This is useful when you
+/// want to separate graph construction from gradient computation, or when
+/// you plan to run the same pullback multiple times.
 ///
 /// # Examples
 ///
-/// ```ignore
-/// let plan = tidu::PullbackPlan::<MyType>::build(&loss).unwrap();
+/// ```
+/// use tidu::{PullbackPlan, Tape};
+///
+/// let tape = Tape::<f64>::new();
+/// let x = tape.leaf(2.0);
+/// let plan = PullbackPlan::build(&x).unwrap();
+/// let grads = plan.execute(&x).unwrap();
+/// assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 1.0);
 /// ```
 #[derive(Debug, Clone)]
 pub struct PullbackPlan<V: Differentiable> {

@@ -82,7 +82,11 @@ impl<V: Differentiable> Tape<V> {
         self.lock_graph().node_count()
     }
 
-    /// Creates a leaf value requiring gradient on this tape.
+    /// Creates a leaf (input variable) on this tape.
+    ///
+    /// Leaves are the starting points of the computation graph. After
+    /// pullback, their gradients can be retrieved from [`Gradients::get`]
+    /// using the returned value's [`TrackedValue::node_id`].
     pub fn leaf(&self, value: V) -> TrackedValue<V> {
         let node_id = self.lock_graph().record_leaf();
         TrackedValue {
@@ -94,7 +98,10 @@ impl<V: Differentiable> Tape<V> {
         }
     }
 
-    /// Creates a leaf value with a tangent for HVP computation.
+    /// Creates a leaf with a tangent direction for HVP computation.
+    ///
+    /// The `tangent` specifies the direction vector **v** in the
+    /// Hessian-vector product H·v. See [`Tape::hvp`] for the full workflow.
     pub fn leaf_with_tangent(&self, value: V, tangent: V::Tangent) -> AdResult<TrackedValue<V>> {
         let node_id = self.lock_graph().record_leaf();
         Ok(TrackedValue {
@@ -106,7 +113,11 @@ impl<V: Differentiable> Tape<V> {
         })
     }
 
-    /// Records an output value on the tape before attaching its reverse rule.
+    /// Records a placeholder node on the tape without a reverse rule.
+    ///
+    /// Use this for **two-phase recording**: first call `placeholder` to
+    /// reserve a node (e.g. when the rule needs the output's own `NodeId`),
+    /// then call [`Tape::attach_rule`] to supply the reverse rule later.
     pub fn placeholder(&self, value: V, tangent: Option<V::Tangent>) -> TrackedValue<V> {
         let node_id = self.lock_graph().record_placeholder();
         TrackedValue {
@@ -118,8 +129,11 @@ impl<V: Differentiable> Tape<V> {
         }
     }
 
-    /// Reconstructs a tracked handle for an existing node already recorded on
-    /// this tape.
+    /// Reconstructs a [`TrackedValue`] handle for a node already on this tape.
+    ///
+    /// Useful when you have a `NodeId` (e.g. serialised or passed across an
+    /// API boundary) and need to re-wrap it with its primal value and tape
+    /// reference. Returns an error if `node_id` is not present on this tape.
     pub fn tracked_existing(
         &self,
         node_id: NodeId,
@@ -165,7 +179,10 @@ impl<V: Differentiable> Tape<V> {
         }
     }
 
-    /// Attaches or replaces the reverse rule for an existing output node.
+    /// Attaches or replaces the reverse rule for an existing node.
+    ///
+    /// Typically used after [`Tape::placeholder`] to complete a two-phase
+    /// recording.
     pub fn attach_rule(&self, node_id: NodeId, rule: Box<dyn ReverseRule<V>>) -> AdResult<()> {
         self.lock_graph().attach_rule(node_id, rule)
     }
@@ -202,7 +219,16 @@ impl<V: Differentiable> Tape<V> {
         guard.pullback_from(output_node, seed)
     }
 
-    /// Computes gradient and Hessian-vector product via forward-over-reverse.
+    /// Computes gradient **and** Hessian-vector product via forward-over-reverse.
+    ///
+    /// Requires:
+    /// - A **scalar** loss (`num_elements() == 1`).
+    /// - Tangents set on leaves via [`Tape::leaf_with_tangent`] — these
+    ///   define the direction vector **v** in H·v.
+    /// - Each rule must implement [`ReverseRule::pullback_with_tangents`]
+    ///   (the default returns `Err(HvpNotSupported)`).
+    ///
+    /// Returns an [`HvpResult`] containing both the gradient and the HVP.
     pub fn hvp(&self, loss: &TrackedValue<V>) -> AdResult<HvpResult<V>>
     where
         V::Tangent: Differentiable<Tangent = V::Tangent>,
@@ -221,7 +247,12 @@ impl<V: Differentiable> Tape<V> {
         )
     }
 
-    /// Marks the current graph as freed.
+    /// Marks the computation graph as freed, releasing stored rules.
+    ///
+    /// After this call, [`pullback`](Self::pullback) and [`hvp`](Self::hvp)
+    /// will return `Err(GraphFreed)` until a new leaf or operation is
+    /// recorded. Creating new leaves or operations automatically revives
+    /// the graph.
     pub fn free_graph(&self) {
         self.lock_graph().free_graph();
     }

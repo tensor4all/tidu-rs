@@ -26,6 +26,67 @@ etc.) from `chainrules-core`, so you only need to import `chainrules`
 explicitly when you use its scalar rule helpers (e.g. `powf_rrule`,
 `powf_frule`).
 
+## Quick Example
+
+Compute the gradient of f(x) = x³ at x = 2 using reverse-mode AD:
+
+```rust
+use chainrules::powf_rrule;
+use tidu::{AdResult, NodeId, ReverseRule, Tape};
+
+// 1. Define a reverse rule for f(x) = x^exponent.
+struct PowfRule { input: NodeId, x: f64, exponent: f64 }
+
+impl ReverseRule<f64> for PowfRule {
+    fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
+        Ok(vec![(self.input, powf_rrule(self.x, self.exponent, *cotangent))])
+    }
+    fn inputs(&self) -> Vec<NodeId> { vec![self.input] }
+}
+
+// 2. Build the computation graph.
+let tape = Tape::<f64>::new();
+let x = tape.leaf(2.0);
+let y = tape.record_op(
+    8.0,                                         // forward value: 2^3
+    Box::new(PowfRule { input: x.node_id().unwrap(), x: 2.0, exponent: 3.0 }),
+    None,                                        // no tangent (only for HVP)
+);
+
+// 3. Run reverse-mode pullback.
+let grads = tape.pullback(&y).unwrap();
+assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0); // dy/dx = 3·2² = 12
+```
+
+See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
+forward-mode, HVP, and custom-type examples.
+
+## Architecture
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                       Tape<V>                       │
+│  Shared, ref-counted autograd graph.                │
+│  Records leaves and operations as graph nodes.      │
+├─────────────────────────────────────────────────────┤
+│                  TrackedValue<V>                     │
+│  A value + its NodeId + a ref to the Tape.          │
+│  Returned by tape.leaf() and tape.record_op().      │
+├─────────────────────────────────────────────────────┤
+│                   Gradients<V>                      │
+│  Leaf-only gradient map returned by pullback.       │
+│  Look up by NodeId: grads.get(node_id).             │
+├─────────────────────────────────────────────────────┤
+│                  DualValue<V>                       │
+│  Primal + tangent pair for forward-mode AD.         │
+│  Independent of the tape — no graph involved.       │
+└─────────────────────────────────────────────────────┘
+
+Traits (from chainrules-core, re-exported by tidu):
+  Differentiable   — tangent algebra for a value type
+  ReverseRule<V>   — pullback logic for one operation
+```
+
 ## What Lives Here
 
 - `tidu`: reverse-mode tape execution and dual-number forward mode

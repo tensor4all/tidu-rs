@@ -150,6 +150,7 @@ impl<V: Differentiable> AutogradGraph<V> {
         output_node: NodeId,
         seed: V::Tangent,
         seed_tangent: V::Tangent,
+        tangents: &[Option<V::Tangent>],
     ) -> AdResult<(Vec<Option<V::Tangent>>, Vec<Option<V::Tangent>>)>
     where
         V::Tangent: Clone + Differentiable<Tangent = V::Tangent>,
@@ -172,7 +173,10 @@ impl<V: Differentiable> AutogradGraph<V> {
                 continue;
             };
             let cot_tan = cot_tangents[i].take().unwrap_or_else(|| cot.zero_tangent());
-            let input_grads = rule.pullback_with_tangents(&cot, &cot_tan)?;
+            let input_tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
+                tangents.get(node.index()).and_then(|t| t.as_ref())
+            };
+            let input_grads = rule.pullback_with_tangents(&cot, &cot_tan, &input_tangents_fn)?;
             for (node_id, grad, grad_tan) in input_grads {
                 let idx = node_id.index();
                 match cotangents[idx].take() {
@@ -193,20 +197,51 @@ impl<V: Differentiable> AutogradGraph<V> {
         Ok((cotangents, cot_tangents))
     }
 
+    /// Two-phase HVP: forward tangent propagation then reverse pass.
+    ///
+    /// Phase 1 walks nodes 0..=output_node and calls `forward_tangents` on
+    /// each op, building a `Vec<Option<V::Tangent>>`.  Leaves are looked up
+    /// in `leaf_tangents`.
+    ///
+    /// Phase 2 runs `compute_cotangents_with_tangents`, passing the tangents
+    /// vec as a closure to `pullback_with_tangents`.
     pub(crate) fn hvp_from(
         &self,
         output_node: NodeId,
         seed: V::Tangent,
         seed_tangent: V::Tangent,
+        leaf_tangents: &std::collections::HashMap<NodeId, V::Tangent>,
     ) -> AdResult<HvpResult<V>>
     where
         V::Tangent: Clone + Differentiable<Tangent = V::Tangent>,
     {
+        let n = self.nodes.len();
+        if output_node.index() >= n {
+            return Err(AutodiffError::MissingNode);
+        }
+
+        // Phase 1: Forward tangent propagation.
+        let mut tangents: Vec<Option<V::Tangent>> = vec![None; n];
+        for i in 0..=output_node.index() {
+            let node = &self.nodes[i];
+            if node.is_leaf {
+                // Look up in leaf_tangents HashMap.
+                tangents[i] = leaf_tangents.get(&NodeId::new(i)).cloned();
+            } else if let Some(rule) = node.rule.as_ref() {
+                let tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
+                    tangents.get(node.index()).and_then(|t| t.as_ref())
+                };
+                tangents[i] = rule.forward_tangents(&tangents_fn)?;
+            }
+        }
+
+        // Phase 2: Reverse pass with tangents.
         let (mut cotangents, mut cot_tangents) =
-            self.compute_cotangents_with_tangents(output_node, seed, seed_tangent)?;
+            self.compute_cotangents_with_tangents(output_node, seed, seed_tangent, &tangents)?;
+
         let mut gradients = Gradients::new();
         let mut hvp = Gradients::new();
-        for i in 0..self.nodes.len() {
+        for i in 0..n {
             if !self.nodes[i].is_leaf {
                 continue;
             }

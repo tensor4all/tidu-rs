@@ -96,22 +96,26 @@
 //!
 //! ## Scalar Hessian-Vector Product
 //!
-//! A Hessian-vector product (HVP) computes **H·v** — the product of the
-//! Hessian of a scalar function with a tangent direction **v** — without
+//! A Hessian-vector product (HVP) computes **H*v** -- the product of the
+//! Hessian of a scalar function with a tangent direction **v** -- without
 //! materialising the full Hessian matrix. `tidu` achieves this via
 //! forward-over-reverse mode.
 //!
-//! To enable HVP, implement [`ReverseRule::pullback_with_tangents`] on your
-//! rule. The default implementation returns `Err(HvpNotSupported)`, so it is
-//! only required when you need second-order derivatives.
+//! To enable HVP, implement [`ReverseRule::forward_tangents`] and
+//! [`ReverseRule::pullback_with_tangents`] on your rule. The default
+//! implementations return `Err(HvpNotSupported)`, so they are only
+//! required when you need second-order derivatives.
+//!
+//! Tangent directions are passed as a `HashMap<NodeId, V::Tangent>` to
+//! [`Tape::hvp`] rather than being stored on leaves or rules.
 //!
 //! ```rust
+//! use std::collections::HashMap;
 //! use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
 //!
 //! struct SquareRuleHvp {
 //!     input: NodeId,
 //!     x: f64,
-//!     dx: f64, // tangent of x, must match the tangent passed to leaf_with_tangent
 //! }
 //!
 //! impl ReverseRule<f64> for SquareRuleHvp {
@@ -123,39 +127,55 @@
 //!         vec![self.input]
 //!     }
 //!
+//!     // Forward tangent propagation: d(x^2) = 2*x*dx.
+//!     fn forward_tangents<'t>(
+//!         &self,
+//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+//!     ) -> AdResult<Option<f64>>
+//!     where
+//!         f64: 't,
+//!     {
+//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
+//!         Ok(Some(2.0 * self.x * dx))
+//!     }
+//!
 //!     // Forward-over-reverse: differentiates the pullback itself.
-//!     // `cotangent` is the standard reverse-mode adjoint.
-//!     // `cotangent_tangent` is its tangent component from the forward pass.
-//!     // Returns (node, gradient, gradient_tangent) triples.
-//!     fn pullback_with_tangents(
+//!     // `input_tangents` provides the forward tangent for each input node.
+//!     fn pullback_with_tangents<'t>(
 //!         &self,
 //!         cotangent: &f64,
 //!         cotangent_tangent: &f64,
-//!     ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+//!     ) -> AdResult<Vec<(NodeId, f64, f64)>>
+//!     where
+//!         f64: 't,
+//!     {
+//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
 //!         Ok(vec![(
 //!             self.input,
 //!             2.0 * self.x * *cotangent,
-//!             2.0 * self.dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
+//!             2.0 * dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
 //!         )])
 //!     }
 //! }
 //!
 //! let tape = Tape::<f64>::new();
-//! // Set tangent v = 1.0 on the leaf for the HVP direction.
-//! let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+//! let x = tape.leaf(3.0);
 //! let y = tape.record_op(
 //!     9.0, // forward value: 3.0^2
 //!     Box::new(SquareRuleHvp {
 //!         input: x.node_id().unwrap(),
 //!         x: 3.0,
-//!         dx: 1.0,
 //!     }),
-//!     None, // no output tangent (only needed for HVP)
+//!     None,
 //! );
-//! let result: HvpResult<f64> = tape.hvp(&y).unwrap();
-//! // Gradient: d(x^2)/dx at x=3 → 6.0
+//! // Pass tangent direction v = 1.0 via HashMap.
+//! let mut leaf_tangents = HashMap::new();
+//! leaf_tangents.insert(x.node_id().unwrap(), 1.0);
+//! let result: HvpResult<f64> = tape.hvp(&y, &leaf_tangents).unwrap();
+//! // Gradient: d(x^2)/dx at x=3 = 6.0
 //! assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
-//! // HVP: H·v = d²(x²)/dx² · 1.0 = 2.0
+//! // HVP: H*v = d^2(x^2)/dx^2 * 1.0 = 2.0
 //! assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
 //! ```
 //!

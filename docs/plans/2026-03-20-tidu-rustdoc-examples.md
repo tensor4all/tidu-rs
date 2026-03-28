@@ -199,12 +199,12 @@ Use these example shapes:
 ```rust
 //! ## Scalar Hessian-Vector Product
 //! ```rust
+//! use std::collections::HashMap;
 //! use tidu::{AdResult, NodeId, ReverseRule, Tape};
 //!
 //! struct SquareRuleHvp {
 //!     input: NodeId,
 //!     x: f64,
-//!     dx: f64,
 //! }
 //!
 //! impl ReverseRule<f64> for SquareRuleHvp {
@@ -216,31 +216,48 @@ Use these example shapes:
 //!         vec![self.input]
 //!     }
 //!
-//!     fn pullback_with_tangents(
+//!     fn forward_tangents<'t>(
+//!         &self,
+//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+//!     ) -> AdResult<Option<f64>>
+//!     where
+//!         f64: 't,
+//!     {
+//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
+//!         Ok(Some(2.0 * self.x * dx))
+//!     }
+//!
+//!     fn pullback_with_tangents<'t>(
 //!         &self,
 //!         cotangent: &f64,
 //!         cotangent_tangent: &f64,
-//!     ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+//!     ) -> AdResult<Vec<(NodeId, f64, f64)>>
+//!     where
+//!         f64: 't,
+//!     {
+//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
 //!         Ok(vec![(
 //!             self.input,
 //!             2.0 * self.x * *cotangent,
-//!             2.0 * self.dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
+//!             2.0 * dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
 //!         )])
 //!     }
 //! }
 //!
 //! let tape = Tape::<f64>::new();
-//! let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+//! let x = tape.leaf(3.0);
 //! let y = tape.record_op(
 //!     9.0,
 //!     Box::new(SquareRuleHvp {
 //!         input: x.node_id().unwrap(),
 //!         x: 3.0,
-//!         dx: 1.0,
 //!     }),
 //!     None,
 //! );
-//! let hvp = tape.hvp(&y).unwrap();
+//! let mut leaf_tangents = HashMap::new();
+//! leaf_tangents.insert(x.node_id().unwrap(), 1.0);
+//! let hvp = tape.hvp(&y, &leaf_tangents).unwrap();
 //! assert_eq!(*hvp.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
 //! assert_eq!(*hvp.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
 //! ```
@@ -411,12 +428,12 @@ For `HvpResult`:
 
 ```rust
 /// ```rust
+/// use std::collections::HashMap;
 /// use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
 ///
 /// struct SquareRuleHvp {
 ///     input: NodeId,
 ///     x: f64,
-///     dx: f64,
 /// }
 ///
 /// impl ReverseRule<f64> for SquareRuleHvp {
@@ -428,31 +445,48 @@ For `HvpResult`:
 ///         vec![self.input]
 ///     }
 ///
-///     fn pullback_with_tangents(
+///     fn forward_tangents<'t>(
+///         &self,
+///         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+///     ) -> AdResult<Option<f64>>
+///     where
+///         f64: 't,
+///     {
+///         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
+///         Ok(Some(2.0 * self.x * dx))
+///     }
+///
+///     fn pullback_with_tangents<'t>(
 ///         &self,
 ///         cotangent: &f64,
 ///         cotangent_tangent: &f64,
-///     ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+///         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+///     ) -> AdResult<Vec<(NodeId, f64, f64)>>
+///     where
+///         f64: 't,
+///     {
+///         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
 ///         Ok(vec![(
 ///             self.input,
 ///             2.0 * self.x * *cotangent,
-///             2.0 * self.dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
+///             2.0 * dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
 ///         )])
 ///     }
 /// }
 ///
 /// let tape = Tape::<f64>::new();
-/// let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+/// let x = tape.leaf(3.0);
 /// let y = tape.record_op(
 ///     9.0,
 ///     Box::new(SquareRuleHvp {
 ///         input: x.node_id().unwrap(),
 ///         x: 3.0,
-///         dx: 1.0,
 ///     }),
 ///     None,
 /// );
-/// let result: HvpResult<f64> = tape.hvp(&y).unwrap();
+/// let mut leaf_tangents = HashMap::new();
+/// leaf_tangents.insert(x.node_id().unwrap(), 1.0);
+/// let result: HvpResult<f64> = tape.hvp(&y, &leaf_tangents).unwrap();
 /// assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
 /// assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
 /// ```

@@ -10,5 +10,5 @@ authors = ["Hiroshi Shinaoka <h.shinaoka@gmail.com>", "GiggleLiu <cacate0129@gma
 publish = false
 
 [workspace.dependencies]
-chainrules-core = { git = "https://github.com/tensor4all/chainrules-rs", rev = "c45a23093df0b4d8967888a8b1b7bb40ffbfeb18" }
-chainrules = { git = "https://github.com/tensor4all/chainrules-rs", rev = "c45a23093df0b4d8967888a8b1b7bb40ffbfeb18" }
+chainrules-core = { git = "https://github.com/tensor4all/chainrules-rs", branch = "deferred-hvp-tangents" }
+chainrules = { git = "https://github.com/tensor4all/chainrules-rs", branch = "deferred-hvp-tangents" }

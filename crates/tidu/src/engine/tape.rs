@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::engine::{AutogradGraph, Gradients, TrackedValue};
@@ -223,13 +224,19 @@ impl<V: Differentiable> Tape<V> {
     ///
     /// Requires:
     /// - A **scalar** loss (`num_elements() == 1`).
-    /// - Tangents set on leaves via [`Tape::leaf_with_tangent`] — these
-    ///   define the direction vector **v** in H·v.
-    /// - Each rule must implement [`ReverseRule::pullback_with_tangents`]
-    ///   (the default returns `Err(HvpNotSupported)`).
+    /// - `leaf_tangents` maps leaf [`NodeId`] values to tangent directions
+    ///   **v** for the Hessian-vector product H·v. Leaves not present in
+    ///   the map are treated as having zero tangent.
+    /// - Each rule must implement [`ReverseRule::forward_tangents`] and
+    ///   [`ReverseRule::pullback_with_tangents`]
+    ///   (the defaults return `Err(HvpNotSupported)`).
     ///
     /// Returns an [`HvpResult`] containing both the gradient and the HVP.
-    pub fn hvp(&self, loss: &TrackedValue<V>) -> AdResult<HvpResult<V>>
+    pub fn hvp(
+        &self,
+        loss: &TrackedValue<V>,
+        leaf_tangents: &HashMap<NodeId, V::Tangent>,
+    ) -> AdResult<HvpResult<V>>
     where
         V::Tangent: Differentiable<Tangent = V::Tangent>,
     {
@@ -244,6 +251,7 @@ impl<V: Differentiable> Tape<V> {
             loss_node,
             loss.value.seed_cotangent(),
             loss.value.zero_tangent(),
+            leaf_tangents,
         )
     }
 

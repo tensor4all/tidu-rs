@@ -1,6 +1,8 @@
 //! Tests for tidu: Tape, TrackedValue, DualValue, Gradients,
 //! PullbackPlan, and pullback with dummy operations.
 
+use std::collections::HashMap;
+
 use tidu::{
     AdResult, AutodiffError, Differentiable, DualValue, Gradients, NodeId, PullbackPlan,
     ReverseRule, Tape, TrackedValue,
@@ -627,15 +629,15 @@ fn pullback_plan_execute_with_op() {
 // ============================================================================
 
 /// Rule: y = x^2
+/// forward_tangents: output tangent = 2*x*dx where dx comes from input_tangents
 /// pullback: dy = 2*x * dL
 /// pullback_with_tangents:
 ///   cotangent of input = 2*x * dL (same as pullback)
 ///   cotangent tangent of input = 2*dx * dL + 2*x * dL_tangent
-///   where dx is the tangent of x, dL is the cotangent, dL_tangent is cotangent tangent
+///   where dx comes from the input_tangents closure
 struct SquareRuleHvp {
     input: NodeId,
     saved_x: f64,
-    saved_dx: f64,
 }
 
 impl ReverseRule<f64> for SquareRuleHvp {
@@ -647,36 +649,54 @@ impl ReverseRule<f64> for SquareRuleHvp {
         vec![self.input]
     }
 
-    fn pullback_with_tangents(
+    fn forward_tangents<'t>(
+        &self,
+        input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+    ) -> AdResult<Option<f64>>
+    where
+        f64: 't,
+    {
+        // d(x^2) = 2*x*dx
+        let dx = input_tangents(self.input).copied().unwrap_or(0.0);
+        Ok(Some(2.0 * self.saved_x * dx))
+    }
+
+    fn pullback_with_tangents<'t>(
         &self,
         cotangent: &f64,
         cotangent_tangent: &f64,
-    ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+        input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+    ) -> AdResult<Vec<(NodeId, f64, f64)>>
+    where
+        f64: 't,
+    {
+        let dx = input_tangents(self.input).copied().unwrap_or(0.0);
         // grad = 2*x * cotangent
         let grad = 2.0 * self.saved_x * cotangent;
         // grad_tangent = 2*dx * cotangent + 2*x * cotangent_tangent
-        let grad_tangent = 2.0 * self.saved_dx * cotangent + 2.0 * self.saved_x * cotangent_tangent;
+        let grad_tangent = 2.0 * dx * cotangent + 2.0 * self.saved_x * cotangent_tangent;
         Ok(vec![(self.input, grad, grad_tangent)])
     }
 }
 
 #[test]
 fn hvp_square_function() {
-    // f(x) = x^2, ∇f = 2x, H = 2, Hv = 2v
+    // f(x) = x^2, grad = 2x, H = 2, Hv = 2v
     // x = 3.0, v = 1.0 (tangent direction)
     let tape = Tape::<f64>::new();
-    let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+    let x = tape.leaf(3.0);
     // y = x^2 = 9
     let y = tape.record_op(
         9.0,
         Box::new(SquareRuleHvp {
             input: x.node_id().unwrap(),
             saved_x: 3.0,
-            saved_dx: 1.0, // tangent of x
         }),
-        None, // output tangent (dy = 2*x*dx = 6) not needed for hvp traversal
+        None,
     );
-    let result = tape.hvp(&y).unwrap();
+    let mut leaf_tangents = HashMap::new();
+    leaf_tangents.insert(x.node_id().unwrap(), 1.0);
+    let result = tape.hvp(&y, &leaf_tangents).unwrap();
     // Gradient: d(x^2)/dx = 2*3 = 6
     assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
     // HVP: H*v = 2*1 = 2
@@ -684,6 +704,7 @@ fn hvp_square_function() {
 }
 
 /// Rule: z = a + b (HVP-aware addition)
+/// forward_tangents: sum of input tangents
 /// pullback: dz/da = cotangent, dz/db = cotangent
 /// pullback_with_tangents: pass cotangent and cotangent_tangent through unchanged
 struct AddRuleHvp {
@@ -699,11 +720,34 @@ impl ReverseRule<f64> for AddRuleHvp {
         self.inputs.clone()
     }
 
-    fn pullback_with_tangents(
+    fn forward_tangents<'t>(
+        &self,
+        input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+    ) -> AdResult<Option<f64>>
+    where
+        f64: 't,
+    {
+        // d(a + b) = da + db
+        let mut sum = 0.0;
+        let mut any = false;
+        for &id in &self.inputs {
+            if let Some(&t) = input_tangents(id) {
+                sum += t;
+                any = true;
+            }
+        }
+        Ok(if any { Some(sum) } else { None })
+    }
+
+    fn pullback_with_tangents<'t>(
         &self,
         cotangent: &f64,
         cotangent_tangent: &f64,
-    ) -> AdResult<Vec<(NodeId, f64, f64)>> {
+        _input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
+    ) -> AdResult<Vec<(NodeId, f64, f64)>>
+    where
+        f64: 't,
+    {
         Ok(self
             .inputs
             .iter()
@@ -715,35 +759,32 @@ impl ReverseRule<f64> for AddRuleHvp {
 #[test]
 fn hvp_dag_merge_point() {
     // f(x) = x^2 + x^2 = 2x^2
-    // ∇f = 4x, H = 4, Hv = 4v
+    // grad = 4x, H = 4, Hv = 4v
     // At x = 3.0, v = 1.0: gradient = 12, HVP = 4
     //
-    // DAG:  x ──> y1 = x^2 ──> z = y1 + y2
-    //       └──> y2 = x^2 ──┘
+    // DAG:  x --> y1 = x^2 --> z = y1 + y2
+    //       \--> y2 = x^2 --/
     //
     // During reverse traversal, x receives cotangent contributions from
-    // both y1 and y2, hitting the Some(existing) accumulation branches
-    // on lines 448 and 458 of lib.rs.
+    // both y1 and y2, hitting the Some(existing) accumulation branches.
     let tape = Tape::<f64>::new();
-    let x = tape.leaf_with_tangent(3.0, 1.0).unwrap();
+    let x = tape.leaf(3.0);
 
-    // y1 = x^2 = 9, tangent dy1 = 2*x*dx = 6
+    // y1 = x^2 = 9
     let y1 = tape.record_op(
         9.0,
         Box::new(SquareRuleHvp {
             input: x.node_id().unwrap(),
             saved_x: 3.0,
-            saved_dx: 1.0,
         }),
         None,
     );
-    // y2 = x^2 = 9, tangent dy2 = 2*x*dx = 6
+    // y2 = x^2 = 9
     let y2 = tape.record_op(
         9.0,
         Box::new(SquareRuleHvp {
             input: x.node_id().unwrap(),
             saved_x: 3.0,
-            saved_dx: 1.0,
         }),
         None,
     );
@@ -756,7 +797,9 @@ fn hvp_dag_merge_point() {
         None,
     );
 
-    let result = tape.hvp(&z).unwrap();
+    let mut leaf_tangents = HashMap::new();
+    leaf_tangents.insert(x.node_id().unwrap(), 1.0);
+    let result = tape.hvp(&z, &leaf_tangents).unwrap();
 
     // Gradient: d(2x^2)/dx = 4*3 = 12
     assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 12.0);
@@ -768,13 +811,75 @@ fn hvp_dag_merge_point() {
 fn hvp_missing_node_error() {
     let tape = Tape::<f64>::new();
     let x = TrackedValue::new(2.0_f64);
-    let result = tape.hvp(&x);
+    let leaf_tangents = HashMap::new();
+    let result = tape.hvp(&x, &leaf_tangents);
     assert!(result.is_err());
     match result {
         Err(AutodiffError::MissingNode) => {}
         Err(other) => panic!("expected MissingNode, got {other:?}"),
         Ok(_) => panic!("expected error"),
     }
+}
+
+#[test]
+fn hvp_empty_tangent_map_gives_zero_hvp() {
+    // f(x) = x^2, but we pass an empty leaf_tangents map.
+    // Gradient should still be correct (6.0), HVP should be 0 (no tangent direction).
+    let tape = Tape::<f64>::new();
+    let x = tape.leaf(3.0);
+    let y = tape.record_op(
+        9.0,
+        Box::new(SquareRuleHvp {
+            input: x.node_id().unwrap(),
+            saved_x: 3.0,
+        }),
+        None,
+    );
+    let leaf_tangents = HashMap::new(); // empty — all tangents are zero
+    let result = tape.hvp(&y, &leaf_tangents).unwrap();
+    assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
+    assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 0.0);
+}
+
+#[test]
+fn hvp_partial_tangent_map() {
+    // f(a, b) = a^2 + b^2, tangent only on a (v_a=1, v_b=0).
+    // Gradient: [2a, 2b] = [6, 10]
+    // Hessian is diag(2, 2), HVP = [2*1, 2*0] = [2, 0]
+    let tape = Tape::<f64>::new();
+    let a = tape.leaf(3.0);
+    let b = tape.leaf(5.0);
+    let a2 = tape.record_op(
+        9.0,
+        Box::new(SquareRuleHvp {
+            input: a.node_id().unwrap(),
+            saved_x: 3.0,
+        }),
+        None,
+    );
+    let b2 = tape.record_op(
+        25.0,
+        Box::new(SquareRuleHvp {
+            input: b.node_id().unwrap(),
+            saved_x: 5.0,
+        }),
+        None,
+    );
+    let z = tape.record_op(
+        34.0,
+        Box::new(AddRuleHvp {
+            inputs: vec![a2.node_id().unwrap(), b2.node_id().unwrap()],
+        }),
+        None,
+    );
+    // Only set tangent for a, not b
+    let mut leaf_tangents = HashMap::new();
+    leaf_tangents.insert(a.node_id().unwrap(), 1.0);
+    let result = tape.hvp(&z, &leaf_tangents).unwrap();
+    assert_eq!(*result.gradients.get(a.node_id().unwrap()).unwrap(), 6.0);
+    assert_eq!(*result.gradients.get(b.node_id().unwrap()).unwrap(), 10.0);
+    assert_eq!(*result.hvp.get(a.node_id().unwrap()).unwrap(), 2.0);
+    assert_eq!(*result.hvp.get(b.node_id().unwrap()).unwrap(), 0.0);
 }
 
 #[test]

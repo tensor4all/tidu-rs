@@ -13,7 +13,10 @@ fn public_rustdoc_examples_no_longer_reference_tenferro() {
     }
 
     assert!(lib.contains("Scalar Reverse Mode"));
+    assert!(lib.contains("Checkpointed Reverse Mode"));
     assert!(lib.contains("Scalar Forward Mode"));
     assert!(lib.contains("Scalar Hessian-Vector Product"));
     assert!(lib.contains("Custom Value Type"));
+    assert!(lib.contains("record_checkpointed_op"));
+    assert!(tape.contains("record_checkpointed_op"));
 }

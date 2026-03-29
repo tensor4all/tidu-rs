@@ -26,6 +26,7 @@
 //!
 //! ## Table of Contents
 //! - [Scalar Reverse Mode](#scalar-reverse-mode)
+//! - [Checkpointed Reverse Mode](#checkpointed-reverse-mode)
 //! - [Scalar Forward Mode](#scalar-forward-mode)
 //! - [Scalar Hessian-Vector Product](#scalar-hessian-vector-product)
 //! - [Custom Value Type](#custom-value-type)
@@ -74,6 +75,69 @@
 //! let grads = tape.pullback(&y).unwrap();
 //! assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0);
 //! ```
+//!
+//! ## Checkpointed Reverse Mode
+//!
+//! [`Tape::record_op`] retains the materialized reverse rule on the tape.
+//! [`Tape::record_checkpointed_op`] stores a lightweight [`CheckpointRecipe`]
+//! instead and replays the reverse rule when pullback or HVP reaches that
+//! node.
+//!
+//! ```rust
+//! use tidu::{AdResult, CheckpointRecipe, NodeId, ReplayResult, ReverseRule, Tape};
+//!
+//! struct SquareRule {
+//!     input: NodeId,
+//!     x: f64,
+//! }
+//!
+//! impl ReverseRule<f64> for SquareRule {
+//!     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
+//!         Ok(vec![(self.input, 2.0 * self.x * *cotangent)])
+//!     }
+//!
+//!     fn inputs(&self) -> Vec<NodeId> {
+//!         vec![self.input]
+//!     }
+//! }
+//!
+//! struct SquareRecipe {
+//!     input: NodeId,
+//! }
+//!
+//! impl CheckpointRecipe<f64> for SquareRecipe {
+//!     fn inputs(&self) -> Vec<NodeId> {
+//!         vec![self.input]
+//!     }
+//!
+//!     fn replay(&self, inputs: &[&f64]) -> AdResult<ReplayResult<f64>> {
+//!         let x = *inputs[0];
+//!         Ok(ReplayResult {
+//!             output_primal: x * x,
+//!             rule: Box::new(SquareRule {
+//!                 input: self.input,
+//!                 x,
+//!             }),
+//!         })
+//!     }
+//! }
+//!
+//! let tape = Tape::<f64>::new();
+//! let x = tape.leaf(3.0);
+//! let y = tape.record_checkpointed_op(
+//!     9.0,
+//!     Box::new(SquareRecipe {
+//!         input: x.node_id().unwrap(),
+//!     }),
+//!     None,
+//! );
+//! let grads = tape.pullback(&y).unwrap();
+//! assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 6.0);
+//! ```
+//!
+//! Attached `TrackedValue` handles reuse retained primals from the tape when
+//! possible, so retained ops do not need `V: Clone` just to preserve a second
+//! copy for replay.
 //!
 //! ## Scalar Forward Mode
 //!
@@ -254,4 +318,7 @@ pub use chainrules_core::*;
 
 mod engine;
 
-pub use engine::{DualValue, Gradients, HvpResult, PullbackPlan, Tape, TrackedValue};
+pub use engine::{
+    CheckpointRecipe, DualValue, Gradients, HvpResult, PullbackPlan, ReplayResult, Tape,
+    TrackedValue,
+};

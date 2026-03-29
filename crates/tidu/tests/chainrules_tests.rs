@@ -31,6 +31,29 @@ impl Differentiable for ScalarBox {
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct NonCloneScalar(f64);
+
+impl Differentiable for NonCloneScalar {
+    type Tangent = ScalarBox;
+
+    fn zero_tangent(&self) -> Self::Tangent {
+        ScalarBox(0.0)
+    }
+
+    fn accumulate_tangent(a: Self::Tangent, b: &Self::Tangent) -> Self::Tangent {
+        ScalarBox(a.0 + b.0)
+    }
+
+    fn num_elements(&self) -> usize {
+        1
+    }
+
+    fn seed_cotangent(&self) -> Self::Tangent {
+        ScalarBox(1.0)
+    }
+}
+
 // ============================================================================
 // Tape creation
 // ============================================================================
@@ -110,6 +133,14 @@ fn leaf_no_tangent() {
     let x = tape.leaf(1.0);
     assert!(!x.has_tangent());
     assert!(x.tangent().is_none());
+}
+
+#[test]
+fn leaf_accepts_non_clone_primal() {
+    let tape = Tape::<NonCloneScalar>::new();
+    let x = tape.leaf(NonCloneScalar(3.14));
+    assert!(x.requires_grad());
+    assert_eq!(x.value(), &NonCloneScalar(3.14));
 }
 
 // ============================================================================
@@ -353,6 +384,20 @@ impl ReverseRule<f64> for MultiplyBy2Rule {
     }
 }
 
+struct MultiplyBy2RuleNonClone {
+    input: NodeId,
+}
+
+impl ReverseRule<NonCloneScalar> for MultiplyBy2RuleNonClone {
+    fn pullback(&self, cotangent: &ScalarBox) -> AdResult<Vec<(NodeId, ScalarBox)>> {
+        Ok(vec![(self.input, ScalarBox(cotangent.0 * 2.0))])
+    }
+
+    fn inputs(&self) -> Vec<NodeId> {
+        vec![self.input]
+    }
+}
+
 #[test]
 fn pullback_single_op() {
     let tape = Tape::<f64>::new();
@@ -367,6 +412,44 @@ fn pullback_single_op() {
     );
     let grads = tape.pullback(&y).unwrap();
     assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 2.0);
+}
+
+#[test]
+fn record_op_accepts_non_clone_primal() {
+    let tape = Tape::<NonCloneScalar>::new();
+    let x = tape.leaf(NonCloneScalar(3.0));
+    let y = tape.record_op(
+        NonCloneScalar(6.0),
+        Box::new(MultiplyBy2RuleNonClone {
+            input: x.node_id().unwrap(),
+        }),
+        None,
+    );
+
+    assert_eq!(y.value(), &NonCloneScalar(6.0));
+
+    let grads = tape.pullback(&y).unwrap();
+    assert_eq!(grads.get(x.node_id().unwrap()), Some(&ScalarBox(2.0)));
+}
+
+#[test]
+fn placeholder_accepts_non_clone_primal() {
+    let tape = Tape::<NonCloneScalar>::new();
+    let x = tape.leaf(NonCloneScalar(3.0));
+    let y = tape.placeholder(NonCloneScalar(6.0), None);
+
+    tape.attach_rule(
+        y.node_id().unwrap(),
+        Box::new(MultiplyBy2RuleNonClone {
+            input: x.node_id().unwrap(),
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(y.value(), &NonCloneScalar(6.0));
+
+    let grads = tape.pullback(&y).unwrap();
+    assert_eq!(grads.get(x.node_id().unwrap()), Some(&ScalarBox(2.0)));
 }
 
 #[test]
@@ -404,6 +487,27 @@ fn attach_rule_missing_node_errors() {
 }
 
 #[test]
+fn attach_rule_rejects_leaf_nodes() {
+    let tape = Tape::<f64>::new();
+    let x = tape.leaf(3.0);
+
+    let result = tape.attach_rule(
+        x.node_id().unwrap(),
+        Box::new(MultiplyBy2Rule {
+            input: x.node_id().unwrap(),
+        }),
+    );
+
+    assert!(
+        result.is_err(),
+        "attach_rule should only accept placeholder nodes"
+    );
+
+    let grads = tape.pullback(&x).unwrap();
+    assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 1.0);
+}
+
+#[test]
 fn tracked_existing_rehydrates_known_node() {
     let tape = Tape::<f64>::new();
     let x = tape.leaf(2.0);
@@ -416,7 +520,7 @@ fn tracked_existing_rehydrates_known_node() {
     );
 
     let restored = tape
-        .tracked_existing(y.node_id().unwrap(), 4.0, Some(0.5))
+        .tracked_existing(y.node_id().unwrap(), 999.0, Some(0.5))
         .unwrap();
     assert!(restored.requires_grad());
     assert_eq!(restored.node_id(), y.node_id());

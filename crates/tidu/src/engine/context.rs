@@ -1,19 +1,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::engine::{ForwardTangentExecution, Node, ReplayExecution};
 use crate::{AdResult, AutodiffError, Differentiable, Gradients, HvpResult, NodeId, ReverseRule};
 
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(1);
 
-struct GraphNode<V: Differentiable> {
-    rule: Option<Box<dyn ReverseRule<V>>>,
-    is_leaf: bool,
-}
+type CotangentBuffers<T> = (Vec<Option<T>>, Vec<Option<T>>);
 
 pub(crate) struct AutogradGraph<V: Differentiable> {
     id: u64,
     graph_alive: bool,
-    nodes: Vec<GraphNode<V>>,
+    nodes: Vec<Node<V>>,
 }
 
 impl<V: Differentiable> AutogradGraph<V> {
@@ -45,34 +43,60 @@ impl<V: Differentiable> AutogradGraph<V> {
         self.graph_alive = false;
     }
 
-    pub(crate) fn record_leaf(&mut self) -> NodeId {
+    #[cfg(test)]
+    pub(crate) fn record_leaf(&mut self, value: V) -> NodeId {
+        self.record_leaf_shared(Arc::new(value))
+    }
+
+    pub(crate) fn record_leaf_shared(&mut self, value: Arc<V>) -> NodeId {
         let id = NodeId::new(self.nodes.len());
-        self.nodes.push(GraphNode {
-            rule: None,
-            is_leaf: true,
-        });
+        self.nodes.push(Node::leaf(value));
         self.graph_alive = true;
         id
     }
 
-    pub(crate) fn record_op(&mut self, rule: Box<dyn ReverseRule<V>>) -> NodeId {
+    #[cfg(test)]
+    pub(crate) fn record_op(&mut self, output_value: V, rule: Box<dyn ReverseRule<V>>) -> NodeId {
+        self.record_op_shared(Arc::new(output_value), rule)
+    }
+
+    pub(crate) fn record_op_shared(
+        &mut self,
+        output_value: Arc<V>,
+        rule: Box<dyn ReverseRule<V>>,
+    ) -> NodeId {
         let id = NodeId::new(self.nodes.len());
-        self.nodes.push(GraphNode {
-            rule: Some(rule),
-            is_leaf: false,
-        });
+        self.nodes.push(Node::materialized(output_value, rule));
         self.graph_alive = true;
         id
     }
 
-    pub(crate) fn record_placeholder(&mut self) -> NodeId {
+    pub(crate) fn record_checkpointed_op(
+        &mut self,
+        recipe: Box<dyn crate::engine::CheckpointRecipe<V>>,
+    ) -> NodeId {
         let id = NodeId::new(self.nodes.len());
-        self.nodes.push(GraphNode {
-            rule: None,
-            is_leaf: false,
-        });
+        self.nodes.push(Node::replayable(recipe));
         self.graph_alive = true;
         id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_placeholder(&mut self, value: V) -> NodeId {
+        self.record_placeholder_shared(Arc::new(value))
+    }
+
+    pub(crate) fn record_placeholder_shared(&mut self, value: Arc<V>) -> NodeId {
+        let id = NodeId::new(self.nodes.len());
+        self.nodes.push(Node::placeholder(value));
+        self.graph_alive = true;
+        id
+    }
+
+    pub(crate) fn node(&self, node: NodeId) -> AdResult<&Node<V>> {
+        self.nodes
+            .get(node.index())
+            .ok_or(AutodiffError::MissingNode)
     }
 
     pub(crate) fn has_node(&self, node: NodeId) -> bool {
@@ -87,9 +111,7 @@ impl<V: Differentiable> AutogradGraph<V> {
         let Some(entry) = self.nodes.get_mut(node.index()) else {
             return Err(AutodiffError::MissingNode);
         };
-        entry.rule = Some(rule);
-        entry.is_leaf = false;
-        Ok(())
+        entry.attach_rule(rule)
     }
 
     pub(crate) fn compute_cotangents(
@@ -104,9 +126,10 @@ impl<V: Differentiable> AutogradGraph<V> {
 
         let mut cotangents = vec![None; n];
         cotangents[output_node.index()] = Some(seed);
+        let mut execution = ReplayExecution::new(self);
 
         for i in (0..=output_node.index()).rev() {
-            let Some(rule) = self.nodes[i].rule.as_ref() else {
+            let Some(rule) = execution.rule(NodeId::new(i))? else {
                 continue;
             };
             let Some(cot) = cotangents[i].take() else {
@@ -135,7 +158,7 @@ impl<V: Differentiable> AutogradGraph<V> {
         let mut cotangents = self.compute_cotangents(output_node, seed)?;
         let mut gradients = Gradients::new();
         for (i, cot) in cotangents.iter_mut().enumerate() {
-            if !self.nodes[i].is_leaf {
+            if !self.nodes[i].is_leaf() {
                 continue;
             }
             if let Some(value) = cot.take() {
@@ -150,8 +173,8 @@ impl<V: Differentiable> AutogradGraph<V> {
         output_node: NodeId,
         seed: V::Tangent,
         seed_tangent: V::Tangent,
-        tangents: &[Option<V::Tangent>],
-    ) -> AdResult<(Vec<Option<V::Tangent>>, Vec<Option<V::Tangent>>)>
+        leaf_tangents: &std::collections::HashMap<NodeId, V::Tangent>,
+    ) -> AdResult<CotangentBuffers<V::Tangent>>
     where
         V::Tangent: Clone + Differentiable<Tangent = V::Tangent>,
     {
@@ -164,17 +187,28 @@ impl<V: Differentiable> AutogradGraph<V> {
         let mut cot_tangents = vec![None; n];
         cotangents[output_node.index()] = Some(seed);
         cot_tangents[output_node.index()] = Some(seed_tangent);
+        let mut forward_tangents = ForwardTangentExecution::new(self, leaf_tangents);
+        let mut reverse_execution = ReplayExecution::new(self);
 
         for i in (0..=output_node.index()).rev() {
-            let Some(rule) = self.nodes[i].rule.as_ref() else {
+            let node_id = NodeId::new(i);
+            let Some(rule) = reverse_execution.rule(node_id)? else {
                 continue;
             };
             let Some(cot) = cotangents[i].take() else {
                 continue;
             };
             let cot_tan = cot_tangents[i].take().unwrap_or_else(|| cot.zero_tangent());
-            let input_tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
-                tangents.get(node.index()).and_then(|t| t.as_ref())
+            let input_tangents = self.nodes[i]
+                .inputs()
+                .iter()
+                .map(|input| Ok((*input, forward_tangents.tangent(*input)?)))
+                .collect::<AdResult<Vec<_>>>()?;
+            let input_tangents_fn = |query: NodeId| -> Option<&V::Tangent> {
+                input_tangents
+                    .iter()
+                    .find(|(node_id, _)| *node_id == query)
+                    .and_then(|(_, tangent)| tangent.as_ref())
             };
             let input_grads = rule.pullback_with_tangents(&cot, &cot_tan, &input_tangents_fn)?;
             for (node_id, grad, grad_tan) in input_grads {
@@ -197,14 +231,12 @@ impl<V: Differentiable> AutogradGraph<V> {
         Ok((cotangents, cot_tangents))
     }
 
-    /// Two-phase HVP: forward tangent propagation then reverse pass.
+    /// Forward-over-reverse HVP with demand-driven tangent replay.
     ///
-    /// Phase 1 walks nodes 0..=output_node and calls `forward_tangents` on
-    /// each op, building a `Vec<Option<V::Tangent>>`.  Leaves are looked up
-    /// in `leaf_tangents`.
-    ///
-    /// Phase 2 runs `compute_cotangents_with_tangents`, passing the tangents
-    /// vec as a closure to `pullback_with_tangents`.
+    /// Forward tangents are computed lazily through a phase-local replay
+    /// context as reverse traversal asks for each node's direct input
+    /// tangents. Replay state for tangent propagation is separate from the
+    /// replay state used during reverse HVP.
     pub(crate) fn hvp_from(
         &self,
         output_node: NodeId,
@@ -220,29 +252,13 @@ impl<V: Differentiable> AutogradGraph<V> {
             return Err(AutodiffError::MissingNode);
         }
 
-        // Phase 1: Forward tangent propagation.
-        let mut tangents: Vec<Option<V::Tangent>> = vec![None; n];
-        for i in 0..=output_node.index() {
-            let node = &self.nodes[i];
-            if node.is_leaf {
-                // Look up in leaf_tangents HashMap.
-                tangents[i] = leaf_tangents.get(&NodeId::new(i)).cloned();
-            } else if let Some(rule) = node.rule.as_ref() {
-                let tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
-                    tangents.get(node.index()).and_then(|t| t.as_ref())
-                };
-                tangents[i] = rule.forward_tangents(&tangents_fn)?;
-            }
-        }
-
-        // Phase 2: Reverse pass with tangents.
         let (mut cotangents, mut cot_tangents) =
-            self.compute_cotangents_with_tangents(output_node, seed, seed_tangent, &tangents)?;
+            self.compute_cotangents_with_tangents(output_node, seed, seed_tangent, leaf_tangents)?;
 
         let mut gradients = Gradients::new();
         let mut hvp = Gradients::new();
         for i in 0..n {
-            if !self.nodes[i].is_leaf {
+            if !self.nodes[i].is_leaf() {
                 continue;
             }
             if let Some(value) = cotangents[i].take() {

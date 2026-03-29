@@ -61,6 +61,21 @@ assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0); // dy/dx = 3·2² =
 See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
 forward-mode, HVP, and custom-type examples.
 
+## Checkpointed Ops
+
+`tidu` supports two reverse-mode recording styles:
+
+- `Tape::record_op(...)` retains the materialized reverse rule on the tape.
+- `Tape::record_checkpointed_op(...)` stores a lightweight replay recipe and
+  rebuilds the reverse rule lazily during pullback or HVP.
+
+Retained primals are shared between the tape and attached `TrackedValue`
+handles, so `record_op` and `leaf` no longer need `V: Clone` just to preserve
+forward values for replay.
+
+That tradeoff is similar in spirit to activation checkpointing, but the API is
+node-oriented rather than a whole-region wrapper.
+
 ## Architecture
 
 ```text
@@ -70,8 +85,8 @@ forward-mode, HVP, and custom-type examples.
 │  Records leaves and operations as graph nodes.      │
 ├─────────────────────────────────────────────────────┤
 │                  TrackedValue<V>                     │
-│  A value + its NodeId + a ref to the Tape.          │
-│  Returned by tape.leaf() and tape.record_op().      │
+│  A primal view + NodeId + a ref to the Tape.        │
+│  Retained primals are shared with the graph.        │
 ├─────────────────────────────────────────────────────┤
 │                   Gradients<V>                      │
 │  Leaf-only gradient map returned by pullback.       │
@@ -85,13 +100,15 @@ forward-mode, HVP, and custom-type examples.
 Traits (from chainrules-core, re-exported by tidu):
   Differentiable   — tangent algebra for a value type
   ReverseRule<V>   — pullback logic for one operation
+  CheckpointRecipe — lazy replay spec for one checkpointed operation
 ```
 
 ## What Lives Here
 
 - `tidu`: reverse-mode tape execution and dual-number forward mode
 - `TrackedValue` and `DualValue`
-- pullback planning, gradient extraction, and Hessian-vector-product support
+- checkpoint replay, pullback planning, gradient extraction, and
+  Hessian-vector-product support
 
 ## Layering
 

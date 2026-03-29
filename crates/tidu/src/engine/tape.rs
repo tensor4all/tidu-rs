@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::engine::{AutogradGraph, Gradients, TrackedValue};
+use crate::engine::{AutogradGraph, CheckpointRecipe, Gradients, TrackedValue};
 use crate::{AdResult, AutodiffError, Differentiable, HvpResult, NodeId, ReverseRule};
 
 /// Reverse-mode AD tape.
@@ -9,6 +9,12 @@ use crate::{AdResult, AutodiffError, Differentiable, HvpResult, NodeId, ReverseR
 /// The tape records operations performed on [`TrackedValue`] values and
 /// enables gradient computation via [`Tape::pullback`] or HVP via
 /// [`Tape::hvp`].
+///
+/// Use [`Tape::record_op`] when you want to retain the materialized reverse
+/// rule on the tape. Use [`Tape::record_checkpointed_op`] when you want to
+/// trade memory for replay: the tape stores a lightweight
+/// [`CheckpointRecipe`](crate::CheckpointRecipe) and rebuilds the reverse rule
+/// lazily during pullback or HVP.
 ///
 /// `Tape` is cheaply cloneable (internally reference-counted). Multiple
 /// clones refer to the same underlying autograd graph.
@@ -89,14 +95,9 @@ impl<V: Differentiable> Tape<V> {
     /// pullback, their gradients can be retrieved from [`Gradients::get`]
     /// using the returned value's [`TrackedValue::node_id`].
     pub fn leaf(&self, value: V) -> TrackedValue<V> {
-        let node_id = self.lock_graph().record_leaf();
-        TrackedValue {
-            value,
-            node_id: Some(node_id),
-            tape: Some(self.clone()),
-            requires_grad: true,
-            tangent: None,
-        }
+        let primal = Arc::new(value);
+        let node_id = self.lock_graph().record_leaf_shared(Arc::clone(&primal));
+        TrackedValue::attached_shared(primal, node_id, self.clone(), None)
     }
 
     /// Creates a leaf with a tangent direction for HVP computation.
@@ -104,14 +105,14 @@ impl<V: Differentiable> Tape<V> {
     /// The `tangent` specifies the direction vector **v** in the
     /// Hessian-vector product H·v. See [`Tape::hvp`] for the full workflow.
     pub fn leaf_with_tangent(&self, value: V, tangent: V::Tangent) -> AdResult<TrackedValue<V>> {
-        let node_id = self.lock_graph().record_leaf();
-        Ok(TrackedValue {
-            value,
-            node_id: Some(node_id),
-            tape: Some(self.clone()),
-            requires_grad: true,
-            tangent: Some(tangent),
-        })
+        let primal = Arc::new(value);
+        let node_id = self.lock_graph().record_leaf_shared(Arc::clone(&primal));
+        Ok(TrackedValue::attached_shared(
+            primal,
+            node_id,
+            self.clone(),
+            Some(tangent),
+        ))
     }
 
     /// Records a placeholder node on the tape without a reverse rule.
@@ -120,21 +121,22 @@ impl<V: Differentiable> Tape<V> {
     /// reserve a node (e.g. when the rule needs the output's own `NodeId`),
     /// then call [`Tape::attach_rule`] to supply the reverse rule later.
     pub fn placeholder(&self, value: V, tangent: Option<V::Tangent>) -> TrackedValue<V> {
-        let node_id = self.lock_graph().record_placeholder();
-        TrackedValue {
-            value,
-            node_id: Some(node_id),
-            tape: Some(self.clone()),
-            requires_grad: true,
-            tangent,
-        }
+        let primal = Arc::new(value);
+        let node_id = self
+            .lock_graph()
+            .record_placeholder_shared(Arc::clone(&primal));
+        TrackedValue::attached_shared(primal, node_id, self.clone(), tangent)
     }
 
     /// Reconstructs a [`TrackedValue`] handle for a node already on this tape.
     ///
     /// Useful when you have a `NodeId` (e.g. serialised or passed across an
     /// API boundary) and need to re-wrap it with its primal value and tape
-    /// reference. Returns an error if `node_id` is not present on this tape.
+    /// reference. When the node still retains its primal on the tape, that
+    /// shared primal is reused and `value` is ignored. If the node's retained
+    /// primal has been evicted, `value` becomes the fallback forward value for
+    /// the returned handle. Returns an error if `node_id` is not present on
+    /// this tape.
     pub fn tracked_existing(
         &self,
         node_id: NodeId,
@@ -148,12 +150,11 @@ impl<V: Differentiable> Tape<V> {
                 node_id.index()
             )));
         }
-        Ok(TrackedValue {
-            value,
-            node_id: Some(node_id),
-            tape: Some(self.clone()),
-            requires_grad: true,
-            tangent,
+        let retained = guard.node(node_id)?.retained_primal_shared();
+        drop(guard);
+        Ok(match retained {
+            Some(primal) => TrackedValue::attached_shared(primal, node_id, self.clone(), tangent),
+            None => TrackedValue::attached_owned(value, node_id, self.clone(), tangent),
         })
     }
 
@@ -170,14 +171,33 @@ impl<V: Differentiable> Tape<V> {
         rule: Box<dyn ReverseRule<V>>,
         output_tangent: Option<V::Tangent>,
     ) -> TrackedValue<V> {
-        let node_id = self.lock_graph().record_op(rule);
-        TrackedValue {
-            value: output_value,
-            node_id: Some(node_id),
-            tape: Some(self.clone()),
-            requires_grad: true,
-            tangent: output_tangent,
-        }
+        let primal = Arc::new(output_value);
+        let node_id = self
+            .lock_graph()
+            .record_op_shared(Arc::clone(&primal), rule);
+        TrackedValue::attached_shared(primal, node_id, self.clone(), output_tangent)
+    }
+
+    /// Records a checkpointed operation on the tape.
+    ///
+    /// The output value is known at forward time, but the reverse rule is
+    /// rebuilt later from the recipe when a future execution context reaches
+    /// this node. The returned [`TrackedValue`] keeps the forward primal even
+    /// though the tape may evict the graph-side retained primal for replay.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let y = tape.record_checkpointed_op(output, Box::new(recipe), None);
+    /// ```
+    pub fn record_checkpointed_op(
+        &self,
+        output_value: V,
+        recipe: Box<dyn CheckpointRecipe<V>>,
+        output_tangent: Option<V::Tangent>,
+    ) -> TrackedValue<V> {
+        let node_id = self.lock_graph().record_checkpointed_op(recipe);
+        TrackedValue::attached_owned(output_value, node_id, self.clone(), output_tangent)
     }
 
     /// Attaches or replaces the reverse rule for an existing node.
@@ -196,11 +216,11 @@ impl<V: Differentiable> Tape<V> {
     ///
     /// Only leaf-node gradients are stored in the returned [`Gradients`].
     pub fn pullback(&self, loss: &TrackedValue<V>) -> AdResult<Gradients<V>> {
-        let n = loss.value.num_elements();
+        let n = loss.value().num_elements();
         if n != 1 {
             return Err(AutodiffError::NonScalarLoss { num_elements: n });
         }
-        self.pullback_with_seed(loss, loss.value.seed_cotangent())
+        self.pullback_with_seed(loss, loss.value().seed_cotangent())
     }
 
     /// Runs reverse-mode pullback from an arbitrary output cotangent seed.
@@ -241,7 +261,7 @@ impl<V: Differentiable> Tape<V> {
         V::Tangent: Differentiable<Tangent = V::Tangent>,
     {
         let loss_node = loss.node_id.ok_or(AutodiffError::MissingNode)?;
-        let n = loss.value.num_elements();
+        let n = loss.value().num_elements();
         if n != 1 {
             return Err(AutodiffError::NonScalarLoss { num_elements: n });
         }
@@ -249,8 +269,8 @@ impl<V: Differentiable> Tape<V> {
         guard.ensure_alive()?;
         guard.hvp_from(
             loss_node,
-            loss.value.seed_cotangent(),
-            loss.value.zero_tangent(),
+            loss.value().seed_cotangent(),
+            loss.value().zero_tangent(),
             leaf_tangents,
         )
     }

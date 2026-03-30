@@ -1,13 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::{AdResult, AutodiffError, Differentiable, NodeId, TrackedValue};
+use crate::engine::TrackedValue;
+use crate::{AdResult, AutodiffError, Differentiable};
+use chainrules_core::NodeId;
 
 /// Accumulated gradients indexed by [`NodeId`].
 ///
-/// Returned by [`Tape::pullback`](crate::Tape::pullback) and
-/// [`Tape::pullback_with_seed`](crate::Tape::pullback_with_seed).
+/// Returned by [`Tape::pullback`](crate::expert::Tape::pullback) and
+/// [`Tape::pullback_with_seed`](crate::expert::Tape::pullback_with_seed).
 ///
-/// **Only leaf nodes** (created via [`Tape::leaf`](crate::Tape::leaf))
+/// **Only leaf nodes** (created via [`Tape::leaf`](crate::expert::Tape::leaf))
 /// appear in the result — intermediate operation nodes are not stored.
 /// Look up a specific gradient with [`Gradients::get`], or iterate over
 /// all entries with [`Gradients::entries`].
@@ -15,7 +17,7 @@ use crate::{AdResult, AutodiffError, Differentiable, NodeId, TrackedValue};
 /// # Examples
 ///
 /// ```
-/// use tidu::{Gradients, NodeId};
+/// use tidu::expert::{Gradients, NodeId};
 ///
 /// let mut grads = Gradients::<f64>::new();
 /// grads.accumulate(NodeId::new(0), 3.0).unwrap();
@@ -31,7 +33,7 @@ impl<V: Differentiable> Gradients<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::Gradients;
+    /// use tidu::expert::Gradients;
     /// let grads = Gradients::<f64>::new();
     /// assert!(grads.entries().is_empty());
     /// ```
@@ -48,7 +50,7 @@ impl<V: Differentiable> Gradients<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::{Gradients, NodeId};
+    /// use tidu::expert::{Gradients, NodeId};
     ///
     /// let mut grads = Gradients::<f64>::new();
     /// grads.accumulate(NodeId::new(0), 5.0).unwrap();
@@ -67,7 +69,7 @@ impl<V: Differentiable> Gradients<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::{Gradients, NodeId};
+    /// use tidu::expert::{Gradients, NodeId};
     ///
     /// let mut grads = Gradients::<f64>::new();
     /// grads.accumulate(NodeId::new(0), 2.0).unwrap();
@@ -89,7 +91,7 @@ impl<V: Differentiable> Gradients<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::{Gradients, NodeId};
+    /// use tidu::expert::{Gradients, NodeId};
     ///
     /// let mut grads = Gradients::<f64>::new();
     /// grads.accumulate(NodeId::new(0), 1.0).unwrap();
@@ -127,7 +129,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use tidu::{PullbackPlan, Tape};
+/// use tidu::expert::{PullbackPlan, Tape};
 ///
 /// let tape = Tape::<f64>::new();
 /// let x = tape.leaf(2.0);
@@ -141,13 +143,13 @@ pub struct PullbackPlan<V: Differentiable> {
     _marker: PhantomData<V>,
 }
 
-impl<V: Differentiable> PullbackPlan<V> {
+impl<V: Differentiable + 'static> PullbackPlan<V> {
     /// Builds a pullback plan from a loss value.
     ///
     /// # Examples
     ///
     /// ```
-    /// use tidu::{PullbackPlan, Tape};
+    /// use tidu::expert::{PullbackPlan, Tape};
     ///
     /// let tape = Tape::<f64>::new();
     /// let x = tape.leaf(2.0);
@@ -167,7 +169,7 @@ impl<V: Differentiable> PullbackPlan<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::{PullbackPlan, Tape};
+    /// use tidu::expert::{PullbackPlan, Tape};
     ///
     /// let tape = Tape::<f64>::new();
     /// let x = tape.leaf(2.0);
@@ -185,7 +187,7 @@ impl<V: Differentiable> PullbackPlan<V> {
     /// # Examples
     ///
     /// ```
-    /// use tidu::{NodeId, PullbackPlan};
+    /// use tidu::expert::{NodeId, PullbackPlan};
     /// let _id_fn: fn(&PullbackPlan<f64>) -> NodeId = PullbackPlan::loss_node;
     /// ```
     pub fn loss_node(&self) -> NodeId {
@@ -197,13 +199,13 @@ impl<V: Differentiable> PullbackPlan<V> {
 ///
 /// Contains both the standard gradient and the Hessian-vector
 /// product H*v, where v is the tangent direction passed as a
-/// `HashMap<NodeId, V::Tangent>` to [`crate::Tape::hvp`].
+/// `HashMap<NodeId, V::Tangent>` to [`crate::expert::Tape::hvp`].
 ///
 /// # Examples
 ///
 /// ```rust
 /// use std::collections::HashMap;
-/// use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
+/// use tidu::{AdResult, expert::{HvpResult, NodeId, ReverseRule, Tape}};
 ///
 /// struct SquareRuleHvp {
 ///     input: NodeId,

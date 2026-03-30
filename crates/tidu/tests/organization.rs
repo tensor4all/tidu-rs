@@ -53,3 +53,23 @@ fn tidu_split_modules_stay_under_size_guideline() {
         );
     }
 }
+
+#[test]
+fn tidu_expert_module_exists_for_low_level_graph_access() {
+    let expert_rs = src_file("expert.rs");
+    assert!(expert_rs.contains(
+        "pub use crate::engine::{Gradients, HvpResult, PullbackPlan, Tape, TrackedValue};"
+    ));
+    assert!(expert_rs.contains("pub use chainrules_core"));
+}
+
+#[test]
+fn tidu_root_surface_stays_value_centered() {
+    let lib_rs = src_file("lib.rs");
+    assert!(lib_rs.contains("pub use engine::DualValue;"));
+    assert!(lib_rs.contains("pub use function::{Op, Schema, SlotSchema};"));
+    assert!(lib_rs.contains("pub use value::Value;"));
+    assert!(!lib_rs.contains(
+        "pub use engine::{DualValue, Gradients, HvpResult, PullbackPlan, Tape, TrackedValue};"
+    ));
+}

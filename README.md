@@ -1,6 +1,7 @@
 # tidu-rs
 
-`tidu-rs` is a general-purpose, tape-based automatic-differentiation engine.
+`tidu-rs` is a general-purpose automatic-differentiation engine with a
+value-centered public API.
 
 It originated in the tensor4all stack, but it is designed to work with any
 downstream differentiable value type that implements the core AD traits from
@@ -21,76 +22,72 @@ tidu       = { git = "https://github.com/tensor4all/tidu-rs" }
 chainrules = { git = "https://github.com/tensor4all/chainrules-rs" }
 ```
 
-`tidu` re-exports the core traits (`Differentiable`, `ReverseRule`, `NodeId`,
-etc.) from `chainrules-core`, so you only need to import `chainrules`
-explicitly when you use its scalar rule helpers (e.g. `powf_rrule`,
-`powf_frule`).
+`tidu` re-exports the core AD traits needed by the normal public surface,
+including `Differentiable`, `AdResult`, and `AutodiffError`. Low-level graph
+types and rule traits now live under `tidu::expert`, while scalar rule helpers
+such as `powf_rrule` and `powf_frule` still come from `chainrules`.
 
 ## Quick Example
 
-Compute the gradient of f(x) = x³ at x = 2 using reverse-mode AD:
+Compute the gradient of `f(x) = x^3` at `x = 2` using the high-level public
+API:
 
 ```rust
-use chainrules::powf_rrule;
-use tidu::{AdResult, NodeId, ReverseRule, Tape};
+use tidu::{Function, GradInputs, Value};
 
-// 1. Define a reverse rule for f(x) = x^exponent.
-struct PowfRule { input: NodeId, x: f64, exponent: f64 }
+struct Cube;
 
-impl ReverseRule<f64> for PowfRule {
-    fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
-        Ok(vec![(self.input, powf_rrule(self.x, self.exponent, *cotangent))])
+impl Function<f64> for Cube {
+    type Saved = f64;
+
+    fn primal(inputs: &[&f64]) -> tidu::AdResult<f64> {
+        Ok(*inputs[0] * *inputs[0] * *inputs[0])
     }
-    fn inputs(&self) -> Vec<NodeId> { vec![self.input] }
+
+    fn save_for_backward(inputs: &[&f64], _output: &f64) -> tidu::AdResult<Self::Saved> {
+        Ok(*inputs[0])
+    }
+
+    fn backward(saved: &Self::Saved, grad_out: &f64) -> tidu::AdResult<GradInputs<f64>> {
+        Ok(GradInputs::from(vec![Some(3.0 * *saved * *saved * *grad_out)]))
+    }
 }
 
-// 2. Build the computation graph.
-let tape = Tape::<f64>::new();
-let x = tape.leaf(2.0);
-let y = tape.record_op(
-    8.0,                                         // forward value: 2^3
-    Box::new(PowfRule { input: x.node_id().unwrap(), x: 2.0, exponent: 3.0 }),
-    None,                                        // no tangent (only for HVP)
-);
-
-// 3. Run reverse-mode pullback.
-let grads = tape.pullback(&y).unwrap();
-assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0); // dy/dx = 3·2² = 12
+let x = Value::new(2.0).requires_grad_(true);
+let y = Cube::apply(&[&x]).unwrap();
+y.backward().unwrap();
+assert_eq!(x.grad().unwrap().unwrap(), 12.0);
 ```
 
 See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
-forward-mode, HVP, and custom-type examples.
+forward-mode, HVP, custom `Function` definitions, and advanced low-level usage.
 
 ## Architecture
 
 ```text
 ┌─────────────────────────────────────────────────────┐
-│                       Tape<V>                       │
-│  Shared, ref-counted autograd graph.                │
-│  Records leaves and operations as graph nodes.      │
+│                      Value<V>                       │
+│  Public value handle for eager reverse-mode AD.     │
+│  Exposes requires_grad_, backward, and grad().      │
 ├─────────────────────────────────────────────────────┤
-│                  TrackedValue<V>                     │
-│  A value + its NodeId + a ref to the Tape.          │
-│  Returned by tape.leaf() and tape.record_op().      │
+│                    Function<V>                      │
+│  High-level custom op API: primal/save/backward.    │
+│  The normal extension path for downstream users.    │
 ├─────────────────────────────────────────────────────┤
-│                   Gradients<V>                      │
-│  Leaf-only gradient map returned by pullback.       │
-│  Look up by NodeId: grads.get(node_id).             │
-├─────────────────────────────────────────────────────┤
-│                  DualValue<V>                       │
+│                    DualValue<V>                     │
 │  Primal + tangent pair for forward-mode AD.         │
-│  Independent of the tape — no graph involved.       │
+│  Independent of the reverse graph runtime.          │
+├─────────────────────────────────────────────────────┤
+│                    tidu::expert                     │
+│  Low-level tape/rule APIs kept for advanced use.    │
 └─────────────────────────────────────────────────────┘
-
-Traits (from chainrules-core, re-exported by tidu):
-  Differentiable   — tangent algebra for a value type
-  ReverseRule<V>   — pullback logic for one operation
 ```
 
 ## What Lives Here
 
-- `tidu`: reverse-mode tape execution and dual-number forward mode
-- `TrackedValue` and `DualValue`
+- `tidu`: value-centered reverse mode and dual-number forward mode
+- `Value`, `Function`, and `DualValue`
+- `tidu::expert` for advanced tape/rule access
 - pullback planning, gradient extraction, and Hessian-vector-product support
 
 ## Layering
@@ -109,7 +106,8 @@ That split is deliberate:
 ## Design Goals
 
 - Keep the engine generic over downstream differentiable value types
-- Preserve strict layering between rules and runtime execution
+- Keep the normal public API torch-like and value-centered
+- Preserve a separate expert path for low-level graph access
 - Prefer root-cause fixes, DRY abstractions, and small focused modules
 
 ## Testing

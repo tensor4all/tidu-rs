@@ -1,11 +1,11 @@
 //! Tests for tidu: Tape, TrackedValue, DualValue, Gradients,
 //! PullbackPlan, and pullback with dummy operations.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, f64::consts::PI};
 
 use tidu::{
-    AdResult, AutodiffError, Differentiable, DualValue, Gradients, NodeId, PullbackPlan,
-    ReverseRule, Tape, TrackedValue,
+    expert::{Gradients, NodeId, PullbackPlan, ReverseRule, Tape, TrackedValue},
+    AdResult, AutodiffError, Differentiable, DualValue,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,14 +83,14 @@ fn same_tape_id_and_node_count_reflect_shared_graph_state() {
 #[test]
 fn leaf_requires_grad() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf(3.14);
+    let x = tape.leaf(PI);
     assert!(x.requires_grad());
 }
 
 #[test]
 fn leaf_has_node_id() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf(3.14);
+    let x = tape.leaf(PI);
     assert!(x.node_id().is_some());
     assert_eq!(x.node_id().unwrap().index(), 0);
 }
@@ -119,7 +119,7 @@ fn leaf_no_tangent() {
 #[test]
 fn leaf_with_tangent_has_tangent() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf_with_tangent(3.14, 1.0).unwrap();
+    let x = tape.leaf_with_tangent(PI, 1.0).unwrap();
     assert!(x.requires_grad());
     assert!(x.has_tangent());
     assert_eq!(*x.tangent().unwrap(), 1.0);
@@ -128,7 +128,7 @@ fn leaf_with_tangent_has_tangent() {
 #[test]
 fn leaf_with_tangent_has_node_id() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf_with_tangent(3.14, 1.0).unwrap();
+    let x = tape.leaf_with_tangent(PI, 1.0).unwrap();
     assert!(x.node_id().is_some());
 }
 
@@ -163,19 +163,19 @@ fn tracked_into_value() {
 #[test]
 fn detach_removes_grad() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf(3.14);
+    let x = tape.leaf(PI);
     assert!(x.requires_grad());
     let d = x.detach();
     assert!(!d.requires_grad());
     assert!(d.node_id().is_none());
     assert!(!d.has_tangent());
-    assert_eq!(*d.value(), 3.14);
+    assert_eq!(*d.value(), PI);
 }
 
 #[test]
 fn detach_removes_tangent() {
     let tape = Tape::<f64>::new();
-    let x = tape.leaf_with_tangent(3.14, 1.0).unwrap();
+    let x = tape.leaf_with_tangent(PI, 1.0).unwrap();
     assert!(x.has_tangent());
     let d = x.detach();
     assert!(!d.has_tangent());
@@ -187,41 +187,41 @@ fn detach_removes_tangent() {
 
 #[test]
 fn dual_new_no_tangent() {
-    let x = DualValue::new(3.14_f64);
+    let x = DualValue::new(PI);
     assert!(!x.has_tangent());
-    assert_eq!(*x.primal(), 3.14);
+    assert_eq!(*x.primal(), PI);
 }
 
 #[test]
 fn dual_with_tangent() {
-    let x = DualValue::with_tangent(3.14_f64, 1.0).unwrap();
+    let x = DualValue::with_tangent(PI, 1.0).unwrap();
     assert!(x.has_tangent());
     assert_eq!(*x.tangent().unwrap(), 1.0);
-    assert_eq!(*x.primal(), 3.14);
+    assert_eq!(*x.primal(), PI);
 }
 
 #[test]
 fn dual_into_parts() {
-    let x = DualValue::with_tangent(3.14_f64, 1.0).unwrap();
+    let x = DualValue::with_tangent(PI, 1.0).unwrap();
     let (p, t) = x.into_parts();
-    assert_eq!(p, 3.14);
+    assert_eq!(p, PI);
     assert_eq!(t, Some(1.0));
 }
 
 #[test]
 fn dual_into_parts_no_tangent() {
-    let x = DualValue::new(3.14_f64);
+    let x = DualValue::new(PI);
     let (p, t) = x.into_parts();
-    assert_eq!(p, 3.14);
+    assert_eq!(p, PI);
     assert_eq!(t, None);
 }
 
 #[test]
 fn dual_detach_tangent() {
-    let x = DualValue::with_tangent(3.14_f64, 1.0).unwrap();
+    let x = DualValue::with_tangent(PI, 1.0).unwrap();
     let c = x.detach_tangent();
     assert!(!c.has_tangent());
-    assert_eq!(*c.primal(), 3.14);
+    assert_eq!(*c.primal(), PI);
 }
 
 // ============================================================================

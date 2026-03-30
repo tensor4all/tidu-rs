@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::engine::{AutogradGraph, Gradients, TrackedValue};
-use crate::{AdResult, AutodiffError, Differentiable, HvpResult, NodeId, ReverseRule};
+use chainrules_core::{NodeId, ReverseRule};
+
+use crate::engine::{
+    AutogradGraph, Gradients, HvpResult, OutputRef, ReverseRuleAdapter, TrackedValue,
+};
+use crate::{AdResult, AutodiffError, Differentiable};
 
 /// Reverse-mode AD tape.
 ///
@@ -17,7 +21,7 @@ use crate::{AdResult, AutodiffError, Differentiable, HvpResult, NodeId, ReverseR
 ///
 /// ```rust
 /// use chainrules::powf_rrule;
-/// use tidu::{AdResult, NodeId, ReverseRule, Tape};
+/// use tidu::{AdResult, expert::{NodeId, ReverseRule, Tape}};
 ///
 /// struct PowfRule {
 ///     input: NodeId,
@@ -53,7 +57,7 @@ pub struct Tape<V: Differentiable> {
     inner: Arc<Mutex<AutogradGraph<V>>>,
 }
 
-impl<V: Differentiable> Tape<V> {
+impl<V: Differentiable + 'static> Tape<V> {
     fn lock_graph(&self) -> MutexGuard<'_, AutogradGraph<V>> {
         match self.inner.lock() {
             Ok(guard) => guard,
@@ -93,6 +97,7 @@ impl<V: Differentiable> Tape<V> {
         TrackedValue {
             value,
             node_id: Some(node_id),
+            output_slot: 0,
             tape: Some(self.clone()),
             requires_grad: true,
             tangent: None,
@@ -108,6 +113,7 @@ impl<V: Differentiable> Tape<V> {
         Ok(TrackedValue {
             value,
             node_id: Some(node_id),
+            output_slot: 0,
             tape: Some(self.clone()),
             requires_grad: true,
             tangent: Some(tangent),
@@ -124,6 +130,7 @@ impl<V: Differentiable> Tape<V> {
         TrackedValue {
             value,
             node_id: Some(node_id),
+            output_slot: 0,
             tape: Some(self.clone()),
             requires_grad: true,
             tangent,
@@ -151,6 +158,7 @@ impl<V: Differentiable> Tape<V> {
         Ok(TrackedValue {
             value,
             node_id: Some(node_id),
+            output_slot: 0,
             tape: Some(self.clone()),
             requires_grad: true,
             tangent,
@@ -170,14 +178,25 @@ impl<V: Differentiable> Tape<V> {
         rule: Box<dyn ReverseRule<V>>,
         output_tangent: Option<V::Tangent>,
     ) -> TrackedValue<V> {
-        let node_id = self.lock_graph().record_op(rule);
+        let node_id = self
+            .lock_graph()
+            .record_op(Box::new(ReverseRuleAdapter::new(rule)));
         TrackedValue {
             value: output_value,
             node_id: Some(node_id),
+            output_slot: 0,
             tape: Some(self.clone()),
             requires_grad: true,
             tangent: output_tangent,
         }
+    }
+
+    pub(crate) fn attach_leaf_node(&self) -> NodeId {
+        self.lock_graph().record_leaf()
+    }
+
+    pub(crate) fn record_op_node(&self, rule: Box<dyn crate::engine::EngineRule<V>>) -> NodeId {
+        self.lock_graph().record_op(rule)
     }
 
     /// Attaches or replaces the reverse rule for an existing node.
@@ -185,7 +204,8 @@ impl<V: Differentiable> Tape<V> {
     /// Typically used after [`Tape::placeholder`] to complete a two-phase
     /// recording.
     pub fn attach_rule(&self, node_id: NodeId, rule: Box<dyn ReverseRule<V>>) -> AdResult<()> {
-        self.lock_graph().attach_rule(node_id, rule)
+        self.lock_graph()
+            .attach_rule(node_id, Box::new(ReverseRuleAdapter::new(rule)))
     }
 
     /// Runs reverse-mode pullback from a scalar loss value.
@@ -217,7 +237,37 @@ impl<V: Differentiable> Tape<V> {
         let output_node = output.node_id.ok_or(AutodiffError::MissingNode)?;
         let guard = self.lock_graph();
         guard.ensure_alive()?;
-        guard.pullback_from(output_node, seed)
+        guard.pullback_from(OutputRef::new(output_node, output.output_slot), seed)
+    }
+
+    pub(crate) fn backward_from_node(
+        &self,
+        output_node: NodeId,
+        output_slot: usize,
+        seed: V::Tangent,
+    ) -> AdResult<()>
+    where
+        V::Tangent: Clone,
+    {
+        let mut guard = self.lock_graph();
+        guard.ensure_alive()?;
+        let gradients = guard.pullback_from(OutputRef::new(output_node, output_slot), seed)?;
+        guard.accumulate_leaf_gradients(&gradients)
+    }
+
+    pub(crate) fn leaf_grad(&self, node: NodeId) -> AdResult<Option<V::Tangent>>
+    where
+        V::Tangent: Clone,
+    {
+        let guard = self.lock_graph();
+        guard.ensure_alive()?;
+        guard.leaf_grad(node)
+    }
+
+    pub(crate) fn zero_leaf_grad(&self, node: NodeId) -> AdResult<()> {
+        let mut guard = self.lock_graph();
+        guard.ensure_alive()?;
+        guard.zero_leaf_grad(node)
     }
 
     /// Computes gradient **and** Hessian-vector product via forward-over-reverse.
@@ -248,7 +298,7 @@ impl<V: Differentiable> Tape<V> {
         let guard = self.lock_graph();
         guard.ensure_alive()?;
         guard.hvp_from(
-            loss_node,
+            OutputRef::new(loss_node, loss.output_slot),
             loss.value.seed_cotangent(),
             loss.value.zero_tangent(),
             leaf_tangents,
@@ -266,7 +316,7 @@ impl<V: Differentiable> Tape<V> {
     }
 }
 
-impl<V: Differentiable> Clone for Tape<V> {
+impl<V: Differentiable + 'static> Clone for Tape<V> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -274,7 +324,7 @@ impl<V: Differentiable> Clone for Tape<V> {
     }
 }
 
-impl<V: Differentiable> Default for Tape<V> {
+impl<V: Differentiable + 'static> Default for Tape<V> {
     fn default() -> Self {
         Self::new()
     }

@@ -1,13 +1,21 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::{AdResult, AutodiffError, Differentiable, Gradients, HvpResult, NodeId, ReverseRule};
+use chainrules_core::NodeId;
+
+use crate::engine::{EngineRule, Gradients, HvpResult, OutputRef};
+use crate::{AdResult, AutodiffError, Differentiable};
 
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(1);
 
+type TangentSlots<V> = Vec<Option<<V as Differentiable>::Tangent>>;
+type NodeTangentSlots<V> = Vec<TangentSlots<V>>;
+
 struct GraphNode<V: Differentiable> {
-    rule: Option<Box<dyn ReverseRule<V>>>,
+    rule: Option<Box<dyn EngineRule<V>>>,
+    output_count: usize,
     is_leaf: bool,
+    grad: Option<V::Tangent>,
 }
 
 pub(crate) struct AutogradGraph<V: Differentiable> {
@@ -49,17 +57,23 @@ impl<V: Differentiable> AutogradGraph<V> {
         let id = NodeId::new(self.nodes.len());
         self.nodes.push(GraphNode {
             rule: None,
+            output_count: 1,
             is_leaf: true,
+            grad: None,
         });
         self.graph_alive = true;
         id
     }
 
-    pub(crate) fn record_op(&mut self, rule: Box<dyn ReverseRule<V>>) -> NodeId {
+    pub(crate) fn record_op(&mut self, rule: Box<dyn EngineRule<V>>) -> NodeId {
         let id = NodeId::new(self.nodes.len());
+        let output_count = rule.output_count();
+        debug_assert!(output_count > 0);
         self.nodes.push(GraphNode {
             rule: Some(rule),
+            output_count,
             is_leaf: false,
+            grad: None,
         });
         self.graph_alive = true;
         id
@@ -69,7 +83,9 @@ impl<V: Differentiable> AutogradGraph<V> {
         let id = NodeId::new(self.nodes.len());
         self.nodes.push(GraphNode {
             rule: None,
+            output_count: 1,
             is_leaf: false,
+            grad: None,
         });
         self.graph_alive = true;
         id
@@ -82,45 +98,118 @@ impl<V: Differentiable> AutogradGraph<V> {
     pub(crate) fn attach_rule(
         &mut self,
         node: NodeId,
-        rule: Box<dyn ReverseRule<V>>,
+        rule: Box<dyn EngineRule<V>>,
     ) -> AdResult<()> {
         let Some(entry) = self.nodes.get_mut(node.index()) else {
             return Err(AutodiffError::MissingNode);
         };
+        entry.output_count = rule.output_count();
         entry.rule = Some(rule);
         entry.is_leaf = false;
         Ok(())
     }
 
+    pub(crate) fn leaf_grad(&self, node: NodeId) -> AdResult<Option<V::Tangent>>
+    where
+        V::Tangent: Clone,
+    {
+        let Some(entry) = self.nodes.get(node.index()) else {
+            return Err(AutodiffError::MissingNode);
+        };
+        if !entry.is_leaf {
+            return Ok(None);
+        }
+        Ok(entry.grad.clone())
+    }
+
+    pub(crate) fn zero_leaf_grad(&mut self, node: NodeId) -> AdResult<()> {
+        let Some(entry) = self.nodes.get_mut(node.index()) else {
+            return Err(AutodiffError::MissingNode);
+        };
+        if entry.is_leaf {
+            entry.grad = None;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn accumulate_leaf_gradients(&mut self, gradients: &Gradients<V>) -> AdResult<()>
+    where
+        V::Tangent: Clone,
+    {
+        for (node, grad) in gradients.entries() {
+            let Some(entry) = self.nodes.get_mut(node.index()) else {
+                return Err(AutodiffError::MissingNode);
+            };
+            if !entry.is_leaf {
+                continue;
+            }
+            entry.grad = match entry.grad.take() {
+                Some(existing) => Some(V::accumulate_tangent(existing, grad)),
+                None => Some(grad.clone()),
+            };
+        }
+        Ok(())
+    }
+
+    fn validate_output_ref(&self, output_ref: OutputRef) -> AdResult<()> {
+        let Some(node) = self.nodes.get(output_ref.node_id.index()) else {
+            return Err(AutodiffError::MissingNode);
+        };
+        if output_ref.output_slot >= node.output_count {
+            return Err(AutodiffError::InvalidArgument(format!(
+                "output slot {} is out of bounds for node {} with {} outputs",
+                output_ref.output_slot,
+                output_ref.node_id.index(),
+                node.output_count
+            )));
+        }
+        Ok(())
+    }
+
+    fn empty_slots(&self) -> NodeTangentSlots<V> {
+        self.nodes
+            .iter()
+            .map(|node| vec![None; node.output_count])
+            .collect()
+    }
+
+    fn accumulate_slot(
+        &self,
+        slots: &mut NodeTangentSlots<V>,
+        output_ref: OutputRef,
+        grad: V::Tangent,
+    ) -> AdResult<()> {
+        self.validate_output_ref(output_ref)?;
+        let node_slots = &mut slots[output_ref.node_id.index()];
+        let slot = &mut node_slots[output_ref.output_slot];
+        match slot.take() {
+            Some(existing) => *slot = Some(V::accumulate_tangent(existing, &grad)),
+            None => *slot = Some(grad),
+        }
+        Ok(())
+    }
+
     pub(crate) fn compute_cotangents(
         &self,
-        output_node: NodeId,
+        output_ref: OutputRef,
         seed: V::Tangent,
-    ) -> AdResult<Vec<Option<V::Tangent>>> {
-        let n = self.nodes.len();
-        if output_node.index() >= n {
-            return Err(AutodiffError::MissingNode);
-        }
+    ) -> AdResult<NodeTangentSlots<V>> {
+        self.validate_output_ref(output_ref)?;
 
-        let mut cotangents = vec![None; n];
-        cotangents[output_node.index()] = Some(seed);
+        let mut cotangents = self.empty_slots();
+        cotangents[output_ref.node_id.index()][output_ref.output_slot] = Some(seed);
 
-        for i in (0..=output_node.index()).rev() {
+        for i in (0..=output_ref.node_id.index()).rev() {
             let Some(rule) = self.nodes[i].rule.as_ref() else {
                 continue;
             };
-            let Some(cot) = cotangents[i].take() else {
+            if cotangents[i].iter().all(Option::is_none) {
                 continue;
-            };
-            let input_grads = rule.pullback(&cot)?;
-            for (node_id, grad) in input_grads {
-                let idx = node_id.index();
-                match cotangents[idx].take() {
-                    Some(existing) => {
-                        cotangents[idx] = Some(V::accumulate_tangent(existing, &grad))
-                    }
-                    None => cotangents[idx] = Some(grad),
-                }
+            }
+            let grad_outputs = std::mem::take(&mut cotangents[i]);
+            let input_grads = rule.pullback(&grad_outputs)?;
+            for (input_ref, grad) in input_grads {
+                self.accumulate_slot(&mut cotangents, input_ref, grad)?;
             }
         }
 
@@ -129,17 +218,17 @@ impl<V: Differentiable> AutogradGraph<V> {
 
     pub(crate) fn pullback_from(
         &self,
-        output_node: NodeId,
+        output_ref: OutputRef,
         seed: V::Tangent,
     ) -> AdResult<Gradients<V>> {
-        let mut cotangents = self.compute_cotangents(output_node, seed)?;
+        let mut cotangents = self.compute_cotangents(output_ref, seed)?;
         let mut gradients = Gradients::new();
-        for (i, cot) in cotangents.iter_mut().enumerate() {
-            if !self.nodes[i].is_leaf {
+        for (index, node_slots) in cotangents.iter_mut().enumerate() {
+            if !self.nodes[index].is_leaf {
                 continue;
             }
-            if let Some(value) = cot.take() {
-                gradients.push_entry(NodeId::new(i), value);
+            if let Some(value) = node_slots[0].take() {
+                gradients.push_entry(NodeId::new(index), value);
             }
         }
         Ok(gradients)
@@ -147,50 +236,44 @@ impl<V: Differentiable> AutogradGraph<V> {
 
     pub(crate) fn compute_cotangents_with_tangents(
         &self,
-        output_node: NodeId,
+        output_ref: OutputRef,
         seed: V::Tangent,
         seed_tangent: V::Tangent,
-        tangents: &[Option<V::Tangent>],
-    ) -> AdResult<(Vec<Option<V::Tangent>>, Vec<Option<V::Tangent>>)>
+        tangents: &NodeTangentSlots<V>,
+    ) -> AdResult<(NodeTangentSlots<V>, NodeTangentSlots<V>)>
     where
         V::Tangent: Clone + Differentiable<Tangent = V::Tangent>,
     {
-        let n = self.nodes.len();
-        if output_node.index() >= n {
-            return Err(AutodiffError::MissingNode);
-        }
+        self.validate_output_ref(output_ref)?;
 
-        let mut cotangents = vec![None; n];
-        let mut cot_tangents = vec![None; n];
-        cotangents[output_node.index()] = Some(seed);
-        cot_tangents[output_node.index()] = Some(seed_tangent);
+        let mut cotangents = self.empty_slots();
+        let mut cot_tangents = self.empty_slots();
+        cotangents[output_ref.node_id.index()][output_ref.output_slot] = Some(seed);
+        cot_tangents[output_ref.node_id.index()][output_ref.output_slot] = Some(seed_tangent);
 
-        for i in (0..=output_node.index()).rev() {
+        for i in (0..=output_ref.node_id.index()).rev() {
             let Some(rule) = self.nodes[i].rule.as_ref() else {
                 continue;
             };
-            let Some(cot) = cotangents[i].take() else {
+            if cotangents[i].iter().all(Option::is_none) {
                 continue;
+            }
+            let grad_outputs = std::mem::take(&mut cotangents[i]);
+            let grad_output_tangents = std::mem::take(&mut cot_tangents[i]);
+            let input_tangents_fn = |input_ref: OutputRef| -> Option<&V::Tangent> {
+                tangents
+                    .get(input_ref.node_id.index())
+                    .and_then(|node_slots| node_slots.get(input_ref.output_slot))
+                    .and_then(|tangent| tangent.as_ref())
             };
-            let cot_tan = cot_tangents[i].take().unwrap_or_else(|| cot.zero_tangent());
-            let input_tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
-                tangents.get(node.index()).and_then(|t| t.as_ref())
-            };
-            let input_grads = rule.pullback_with_tangents(&cot, &cot_tan, &input_tangents_fn)?;
-            for (node_id, grad, grad_tan) in input_grads {
-                let idx = node_id.index();
-                match cotangents[idx].take() {
-                    Some(existing) => {
-                        cotangents[idx] = Some(V::accumulate_tangent(existing, &grad))
-                    }
-                    None => cotangents[idx] = Some(grad),
-                }
-                match cot_tangents[idx].take() {
-                    Some(existing) => {
-                        cot_tangents[idx] = Some(V::accumulate_tangent(existing, &grad_tan))
-                    }
-                    None => cot_tangents[idx] = Some(grad_tan),
-                }
+            let input_grads = rule.pullback_with_tangents(
+                &grad_outputs,
+                &grad_output_tangents,
+                &input_tangents_fn,
+            )?;
+            for (input_ref, grad, grad_tangent) in input_grads {
+                self.accumulate_slot(&mut cotangents, input_ref, grad)?;
+                self.accumulate_slot(&mut cot_tangents, input_ref, grad_tangent)?;
             }
         }
 
@@ -198,16 +281,9 @@ impl<V: Differentiable> AutogradGraph<V> {
     }
 
     /// Two-phase HVP: forward tangent propagation then reverse pass.
-    ///
-    /// Phase 1 walks nodes 0..=output_node and calls `forward_tangents` on
-    /// each op, building a `Vec<Option<V::Tangent>>`.  Leaves are looked up
-    /// in `leaf_tangents`.
-    ///
-    /// Phase 2 runs `compute_cotangents_with_tangents`, passing the tangents
-    /// vec as a closure to `pullback_with_tangents`.
     pub(crate) fn hvp_from(
         &self,
-        output_node: NodeId,
+        output_ref: OutputRef,
         seed: V::Tangent,
         seed_tangent: V::Tangent,
         leaf_tangents: &std::collections::HashMap<NodeId, V::Tangent>,
@@ -215,40 +291,49 @@ impl<V: Differentiable> AutogradGraph<V> {
     where
         V::Tangent: Clone + Differentiable<Tangent = V::Tangent>,
     {
-        let n = self.nodes.len();
-        if output_node.index() >= n {
-            return Err(AutodiffError::MissingNode);
-        }
+        self.validate_output_ref(output_ref)?;
 
-        // Phase 1: Forward tangent propagation.
-        let mut tangents: Vec<Option<V::Tangent>> = vec![None; n];
-        for i in 0..=output_node.index() {
+        let mut tangents = self.empty_slots();
+        for i in 0..=output_ref.node_id.index() {
             let node = &self.nodes[i];
             if node.is_leaf {
-                // Look up in leaf_tangents HashMap.
-                tangents[i] = leaf_tangents.get(&NodeId::new(i)).cloned();
-            } else if let Some(rule) = node.rule.as_ref() {
-                let tangents_fn = |node: NodeId| -> Option<&V::Tangent> {
-                    tangents.get(node.index()).and_then(|t| t.as_ref())
-                };
-                tangents[i] = rule.forward_tangents(&tangents_fn)?;
+                tangents[i][0] = leaf_tangents.get(&NodeId::new(i)).cloned();
+                continue;
             }
+            let Some(rule) = node.rule.as_ref() else {
+                continue;
+            };
+            let tangents_fn = |input_ref: OutputRef| -> Option<&V::Tangent> {
+                tangents
+                    .get(input_ref.node_id.index())
+                    .and_then(|node_slots| node_slots.get(input_ref.output_slot))
+                    .and_then(|tangent| tangent.as_ref())
+            };
+            let output_tangents = rule.forward_tangents(&tangents_fn)?;
+            if output_tangents.len() != node.output_count {
+                return Err(AutodiffError::InvalidArgument(format!(
+                    "rule for node {} returned {} forward tangent slots for {} outputs",
+                    i,
+                    output_tangents.len(),
+                    node.output_count
+                )));
+            }
+            tangents[i] = output_tangents;
         }
 
-        // Phase 2: Reverse pass with tangents.
         let (mut cotangents, mut cot_tangents) =
-            self.compute_cotangents_with_tangents(output_node, seed, seed_tangent, &tangents)?;
+            self.compute_cotangents_with_tangents(output_ref, seed, seed_tangent, &tangents)?;
 
         let mut gradients = Gradients::new();
         let mut hvp = Gradients::new();
-        for i in 0..n {
+        for i in 0..self.nodes.len() {
             if !self.nodes[i].is_leaf {
                 continue;
             }
-            if let Some(value) = cotangents[i].take() {
+            if let Some(value) = cotangents[i][0].take() {
                 gradients.push_entry(NodeId::new(i), value);
             }
-            if let Some(value) = cot_tangents[i].take() {
+            if let Some(value) = cot_tangents[i][0].take() {
                 hvp.push_entry(NodeId::new(i), value);
             }
         }

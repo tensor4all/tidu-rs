@@ -1,4 +1,4 @@
-use tidu::{Differentiable, Tape};
+use tidu::{expert::Tape, Differentiable};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Pair {

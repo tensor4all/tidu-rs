@@ -1,5 +1,6 @@
 use crate::engine::Tape;
-use crate::{Differentiable, NodeId};
+use crate::Differentiable;
+use chainrules_core::NodeId;
 
 /// A value connected to a [`Tape`] for reverse-mode AD.
 ///
@@ -16,7 +17,7 @@ use crate::{Differentiable, NodeId};
 /// # Examples
 ///
 /// ```rust
-/// use tidu::Tape;
+/// use tidu::expert::Tape;
 ///
 /// let tape = Tape::<f64>::new();
 /// let x = tape.leaf(3.0);
@@ -26,6 +27,7 @@ use crate::{Differentiable, NodeId};
 pub struct TrackedValue<V: Differentiable> {
     pub(crate) value: V,
     pub(crate) node_id: Option<NodeId>,
+    pub(crate) output_slot: usize,
     pub(crate) tape: Option<Tape<V>>,
     pub(crate) requires_grad: bool,
     pub(crate) tangent: Option<V::Tangent>,
@@ -41,6 +43,7 @@ impl<V: Differentiable> TrackedValue<V> {
         Self {
             value,
             node_id: None,
+            output_slot: 0,
             tape: None,
             requires_grad: false,
             tangent: None,
@@ -96,6 +99,7 @@ impl<V: Differentiable> TrackedValue<V> {
         Self {
             value: self.value,
             node_id: None,
+            output_slot: 0,
             tape: None,
             requires_grad: false,
             tangent: None,

@@ -1,19 +1,29 @@
 #[test]
-fn public_rustdoc_examples_no_longer_reference_tenferro() {
-    let tracked = include_str!("../src/engine/tracked.rs");
-    let tape = include_str!("../src/engine/tape.rs");
-    let results = include_str!("../src/engine/results.rs");
+fn public_rustdoc_examples_match_linearize_first_story() {
     let lib = include_str!("../src/lib.rs");
 
-    for text in [tracked, tape, results, lib] {
+    assert!(
+        !lib.contains("tenferro_"),
+        "public rustdoc should not use tenferro-specific examples"
+    );
+
+    for required in [
+        "Value-Centered Reverse Mode",
+        "Local Directional Derivatives",
+        "Checkpoint Policy",
+        "LinearizableOp",
+        "LinearizedOp",
+    ] {
         assert!(
-            !text.contains("tenferro_"),
-            "public rustdoc should not use tenferro-specific examples"
+            lib.contains(required),
+            "public rustdoc should mention `{required}`"
         );
     }
 
-    assert!(lib.contains("Value-Centered Reverse Mode"));
-    assert!(lib.contains("Scalar Forward Mode"));
-    assert!(lib.contains("Custom Value Type"));
-    assert!(lib.contains("Expert API"));
+    for forbidden in ["Scalar Forward Mode", "Expert API", "DualValue", "HVP"] {
+        assert!(
+            !lib.contains(forbidden),
+            "public rustdoc should not mention `{forbidden}`"
+        );
+    }
 }

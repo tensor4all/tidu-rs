@@ -47,7 +47,12 @@ fn tidu_root_surface_exports_only_linearize_first_api() {
 fn readme_quick_start_stays_linearize_first() {
     let readme = repo_file("README.md");
 
-    for required in ["LinearizableOp", "LinearizedOp", "CheckpointMode", "with_ad_policy"] {
+    for required in [
+        "LinearizableOp",
+        "LinearizedOp",
+        "CheckpointMode",
+        "with_ad_policy",
+    ] {
         assert!(
             readme.contains(required),
             "README.md should mention `{required}` in the public story"

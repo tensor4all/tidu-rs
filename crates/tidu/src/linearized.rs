@@ -51,7 +51,7 @@ pub trait LinearizableOp<V: Differentiable + Send + Sync + 'static>: Send + Sync
     fn output_schema(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Schema>;
     fn linearize(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Self::Linearized>;
 
-    #[doc(hidden)]
+    /// Return a retain-vs-replay hint for the runtime checkpoint policy.
     fn checkpoint_hint(&self) -> CheckpointHint {
         CheckpointHint::CheapReplay
     }
@@ -97,12 +97,15 @@ pub trait LinearizableOp<V: Differentiable + Send + Sync + 'static>: Send + Sync
             })
             .collect::<AdResult<Vec<_>>>()?;
 
-        let linearized = self.linearize(&primals, &outputs)?;
         let stored_linearization =
             match storage_decision(current_ad_policy(), self.checkpoint_hint()) {
-                StorageDecision::Retain | StorageDecision::Replay => {
-                    StoredNodeLinearization::retained(linearized)
+                StorageDecision::Retain => {
+                    StoredNodeLinearization::retained(self.linearize(&primals, &outputs)?)
                 }
+                StorageDecision::Replay => StoredNodeLinearization::replay(
+                    self.clone(),
+                    inputs.iter().map(|input| input.shared_primal()).collect(),
+                ),
             };
 
         let output_count = output_schema.slots.len();

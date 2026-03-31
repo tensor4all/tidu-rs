@@ -27,6 +27,7 @@ fn tidu_root_surface_exports_only_linearize_first_api() {
         "pub use checkpoint::{",
         "AdExecutionPolicy",
         "CheckpointMode",
+        "CheckpointHint",
         "with_ad_policy",
     ] {
         assert!(
@@ -115,5 +116,10 @@ fn checkpoint_boundary_uses_public_hint_not_internal_class_name() {
     assert!(
         linearized_rs.contains("fn checkpoint_hint(&self) -> CheckpointHint"),
         "LinearizableOp should use checkpoint_hint instead of checkpoint_class"
+    );
+    let lib_rs = src_file("lib.rs");
+    assert!(
+        lib_rs.contains("CheckpointHint"),
+        "lib.rs should re-export CheckpointHint so downstream impls can override checkpoint_hint"
     );
 }

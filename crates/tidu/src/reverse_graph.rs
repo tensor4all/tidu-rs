@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::graph_task::GraphTask;
-use crate::linearized::LinearizedOp;
+use crate::linearized::{LinearizableOp, LinearizedOp};
 use crate::{AdResult, Differentiable};
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -85,7 +85,11 @@ pub(crate) trait StoredLinearization<V: Differentiable>: Send + Sync {
     ) -> AdResult<Vec<Option<V::Tangent>>>;
 }
 
-impl<V, L> StoredLinearization<V> for L
+struct RetainedLinearization<L> {
+    linearized: L,
+}
+
+impl<V, L> StoredLinearization<V> for RetainedLinearization<L>
 where
     V: Differentiable + Send + Sync + 'static,
     L: LinearizedOp<V> + Send + Sync + 'static,
@@ -95,12 +99,13 @@ where
         output_cotangents: &[Option<V::Tangent>],
         input_grad_mask: &[bool],
     ) -> AdResult<Vec<Option<V::Tangent>>> {
-        LinearizedOp::vjp(self, output_cotangents, input_grad_mask)
+        LinearizedOp::vjp(&self.linearized, output_cotangents, input_grad_mask)
     }
 }
 
 pub(crate) enum StoredNodeLinearization<V: Differentiable> {
     Retained(Box<dyn StoredLinearization<V>>),
+    Replay(Box<dyn StoredLinearization<V>>),
 }
 
 impl<V: Differentiable> StoredNodeLinearization<V> {
@@ -109,7 +114,15 @@ impl<V: Differentiable> StoredNodeLinearization<V> {
         V: Send + Sync + 'static,
         L: LinearizedOp<V> + Send + Sync + 'static,
     {
-        Self::Retained(Box::new(linearized))
+        Self::Retained(Box::new(RetainedLinearization { linearized }))
+    }
+
+    pub(crate) fn replay<O>(op: O, input_primals: Vec<Arc<V>>) -> Self
+    where
+        V: Send + Sync + 'static,
+        O: LinearizableOp<V> + Clone + Send + Sync + 'static,
+    {
+        Self::Replay(Box::new(ReplayLinearization { op, input_primals }))
     }
 
     pub(crate) fn vjp(
@@ -119,7 +132,38 @@ impl<V: Differentiable> StoredNodeLinearization<V> {
     ) -> AdResult<Vec<Option<V::Tangent>>> {
         match self {
             Self::Retained(linearization) => linearization.vjp(output_cotangents, input_grad_mask),
+            Self::Replay(linearization) => linearization.vjp(output_cotangents, input_grad_mask),
         }
+    }
+}
+
+struct ReplayLinearization<V, O>
+where
+    V: Differentiable + Send + Sync + 'static,
+    O: LinearizableOp<V>,
+{
+    op: O,
+    input_primals: Vec<Arc<V>>,
+}
+
+impl<V, O> StoredLinearization<V> for ReplayLinearization<V, O>
+where
+    V: Differentiable + Send + Sync + 'static,
+    O: LinearizableOp<V> + Clone + Send + Sync + 'static,
+{
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<V::Tangent>>> {
+        let inputs: Vec<&V> = self
+            .input_primals
+            .iter()
+            .map(|primal| primal.as_ref())
+            .collect();
+        let outputs = self.op.primal(&inputs)?;
+        let linearized = self.op.linearize(&inputs, &outputs)?;
+        LinearizedOp::vjp(&linearized, output_cotangents, input_grad_mask)
     }
 }
 

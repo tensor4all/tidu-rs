@@ -26,7 +26,8 @@ pub(crate) enum StorageDecision {
     Replay,
 }
 
-#[doc(hidden)]
+/// Public hint used by [`crate::LinearizableOp::checkpoint_hint`] to guide
+/// retain-vs-replay policy decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckpointHint {
     CheapReplay,
@@ -39,14 +40,27 @@ thread_local! {
         RefCell::new(vec![AdExecutionPolicy::default()]);
 }
 
+struct PolicyScopeGuard;
+
+impl PolicyScopeGuard {
+    fn push(policy: AdExecutionPolicy) -> Self {
+        POLICY_STACK.with(|stack| stack.borrow_mut().push(policy));
+        Self
+    }
+}
+
+impl Drop for PolicyScopeGuard {
+    fn drop(&mut self) {
+        POLICY_STACK.with(|stack| {
+            let popped = stack.borrow_mut().pop();
+            debug_assert!(popped.is_some());
+        });
+    }
+}
+
 pub fn with_ad_policy<R>(policy: AdExecutionPolicy, f: impl FnOnce() -> R) -> R {
-    POLICY_STACK.with(|stack| stack.borrow_mut().push(policy));
-    let result = f();
-    POLICY_STACK.with(|stack| {
-        let popped = stack.borrow_mut().pop();
-        debug_assert!(popped.is_some());
-    });
-    result
+    let _guard = PolicyScopeGuard::push(policy);
+    f()
 }
 
 pub(crate) fn current_ad_policy() -> AdExecutionPolicy {

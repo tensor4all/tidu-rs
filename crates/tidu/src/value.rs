@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::reverse_graph::{
     backward_from, grad_wrt, leaf_grad, leaf_handle, shares_graph, zero_leaf_grad, LeafHandle,
@@ -23,7 +23,7 @@ struct ReverseState<V: Differentiable> {
 /// Internally it carries either a leaf gradient sink or an edge into a reverse
 /// graph.
 pub struct Value<V: Differentiable> {
-    primal: V,
+    primal: Arc<V>,
     reverse: Mutex<ReverseState<V>>,
 }
 
@@ -31,7 +31,7 @@ impl<V: Differentiable + 'static> Value<V> {
     /// Create a detached value.
     pub fn new(primal: V) -> Self {
         Self {
-            primal,
+            primal: Arc::new(primal),
             reverse: Mutex::new(ReverseState {
                 requires_grad: false,
                 handle: ReverseHandle::None,
@@ -41,7 +41,7 @@ impl<V: Differentiable + 'static> Value<V> {
 
     pub(crate) fn from_reverse_edge(primal: V, edge: ReverseEdge<V>) -> Self {
         Self {
-            primal,
+            primal: Arc::new(primal),
             reverse: Mutex::new(ReverseState {
                 requires_grad: true,
                 handle: ReverseHandle::Edge(edge),
@@ -51,7 +51,11 @@ impl<V: Differentiable + 'static> Value<V> {
 
     /// Borrow the primal value.
     pub fn primal(&self) -> &V {
-        &self.primal
+        self.primal.as_ref()
+    }
+
+    pub(crate) fn shared_primal(&self) -> Arc<V> {
+        self.primal.clone()
     }
 
     /// Return whether this value participates in reverse-mode AD.
@@ -129,11 +133,11 @@ impl<V: Differentiable + 'static> Value<V> {
     where
         V::Tangent: Clone,
     {
-        let n = self.primal.num_elements();
+        let n = self.primal.as_ref().num_elements();
         if n != 1 {
             return Err(AutodiffError::NonScalarLoss { num_elements: n });
         }
-        self.backward_with_seed(self.primal.seed_cotangent())
+        self.backward_with_seed(self.primal.as_ref().seed_cotangent())
     }
 
     /// Run reverse-mode backward with an explicit cotangent seed.

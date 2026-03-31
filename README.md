@@ -25,8 +25,8 @@ chainrules = { git = "https://github.com/tensor4all/chainrules-rs" }
 `tidu` re-exports the core AD traits needed by the normal public surface,
 including `Differentiable`, `AdResult`, and `AutodiffError`. The intended
 public extension points are `Value`, `LinearizableOp`, `LinearizedOp`,
-`Schema`, `SlotSchema`, `CheckpointMode`, `AdExecutionPolicy`, and
-`with_ad_policy(...)`.
+`Schema`, `SlotSchema`, `CheckpointMode`, `AdExecutionPolicy`,
+`CheckpointHint`, and `with_ad_policy(...)`.
 
 ## Quick Example
 
@@ -117,6 +117,10 @@ with_ad_policy(policy, || -> tidu::AdResult<()> {
 })
 .unwrap();
 ```
+
+`CheckpointHint` is an advanced retain-vs-replay hint for custom ops. Most
+downstream code only needs `CheckpointMode`, `AdExecutionPolicy`, and
+`with_ad_policy(...)`.
 
 See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
 `Value`, `LinearizableOp`, `LinearizedOp`, and checkpoint policy examples.

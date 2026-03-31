@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tidu::{LinearizableOp, LinearizedOp, Schema, SlotSchema, Value};
+use tidu::{Differentiable, LinearizableOp, LinearizedOp, Schema, SlotSchema, Value};
 
 static FREEZE_LINEARIZE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -286,5 +286,115 @@ fn nondifferentiable_outputs_return_detached_values_without_linearizing() -> tid
     assert!(!y.requires_grad());
     assert_eq!(x.grad()?, None);
     assert_eq!(FREEZE_LINEARIZE_COUNT.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TaggedScalar {
+    value: f64,
+    tag: u8,
+}
+
+impl Differentiable for TaggedScalar {
+    type Tangent = f64;
+
+    fn zero_tangent(&self) -> Self::Tangent {
+        0.0
+    }
+
+    fn accumulate_tangent(a: Self::Tangent, b: &Self::Tangent) -> Self::Tangent {
+        a + *b
+    }
+
+    fn num_elements(&self) -> usize {
+        1
+    }
+
+    fn seed_cotangent(&self) -> Self::Tangent {
+        1.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TaggedSquare;
+
+struct TaggedSquareLinearized {
+    value: f64,
+}
+
+impl LinearizedOp<TaggedScalar> for TaggedSquareLinearized {
+    fn jvp(
+        &self,
+        input_tangents: &[Option<<TaggedScalar as Differentiable>::Tangent>],
+    ) -> tidu::AdResult<Vec<Option<<TaggedScalar as Differentiable>::Tangent>>> {
+        Ok(vec![input_tangents[0].map(|dx| 2.0 * self.value * dx)])
+    }
+
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<<TaggedScalar as Differentiable>::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> tidu::AdResult<Vec<Option<<TaggedScalar as Differentiable>::Tangent>>> {
+        assert_eq!(input_grad_mask, &[true]);
+        let grad_out = output_cotangents[0].unwrap_or(0.0);
+        Ok(vec![Some(2.0 * self.value * grad_out)])
+    }
+}
+
+impl LinearizableOp<TaggedScalar> for TaggedSquare {
+    type Linearized = TaggedSquareLinearized;
+
+    fn primal(&self, inputs: &[&TaggedScalar]) -> tidu::AdResult<Vec<TaggedScalar>> {
+        Ok(vec![TaggedScalar {
+            value: inputs[0].value * inputs[0].value,
+            tag: inputs[0].tag,
+        }])
+    }
+
+    fn input_schema(&self, _inputs: &[&TaggedScalar]) -> tidu::AdResult<Schema> {
+        Ok(Schema {
+            slots: vec![SlotSchema {
+                differentiable: true,
+                auxiliary: false,
+            }],
+        })
+    }
+
+    fn output_schema(
+        &self,
+        _inputs: &[&TaggedScalar],
+        _outputs: &[TaggedScalar],
+    ) -> tidu::AdResult<Schema> {
+        Ok(Schema {
+            slots: vec![SlotSchema {
+                differentiable: true,
+                auxiliary: false,
+            }],
+        })
+    }
+
+    fn linearize(
+        &self,
+        inputs: &[&TaggedScalar],
+        _outputs: &[TaggedScalar],
+    ) -> tidu::AdResult<Self::Linearized> {
+        Ok(TaggedSquareLinearized {
+            value: inputs[0].value,
+        })
+    }
+}
+
+#[test]
+fn linearized_ops_support_custom_differentiable_value_types() -> tidu::AdResult<()> {
+    let x = Value::new(TaggedScalar { value: 3.0, tag: 7 }).requires_grad_(true);
+    let y = TaggedSquare.apply_one(&[&x])?;
+
+    assert_eq!(*y.primal(), TaggedScalar { value: 9.0, tag: 7 });
+
+    y.backward()?;
+    assert_eq!(x.grad()?, Some(6.0));
+
+    let lin = TaggedSquare.linearize(&[x.primal()], &[*y.primal()])?;
+    assert_eq!(lin.jvp(&[Some(1.5)])?, vec![Some(9.0)]);
     Ok(())
 }

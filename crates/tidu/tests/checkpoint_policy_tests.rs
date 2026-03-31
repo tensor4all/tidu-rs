@@ -1,30 +1,50 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex};
 
 use tidu::{
-    with_ad_policy, AdExecutionPolicy, CheckpointMode, LinearizableOp, LinearizedOp, Schema,
-    SlotSchema, Value,
+    with_ad_policy, AdExecutionPolicy, CheckpointHint, CheckpointMode, LinearizableOp,
+    LinearizedOp, Schema, SlotSchema, Value,
 };
 
-static RETAIN_LINEARIZE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static REPLAY_LINEARIZE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static REPLAY_VJP_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[derive(Clone, Copy)]
-struct CheapReplay;
-
-#[derive(Clone, Copy)]
-struct ExpensiveReplay;
-
-#[derive(Clone, Copy)]
-struct MustRetain;
-
-struct CountingLinearized {
+#[derive(Clone)]
+struct LoggingOp {
     slope: f64,
-    replay_vjp_counter: &'static AtomicUsize,
+    hint: CheckpointHint,
+    events: Arc<Mutex<Vec<&'static str>>>,
 }
 
-impl LinearizedOp<f64> for CountingLinearized {
+struct LoggingLinearized {
+    slope: f64,
+    events: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl LoggingOp {
+    fn new(slope: f64, hint: CheckpointHint) -> Self {
+        Self {
+            slope,
+            hint,
+            events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn snapshot(&self) -> Vec<&'static str> {
+        self.events.lock().expect("event log poisoned").clone()
+    }
+
+    fn record(&self, event: &'static str) {
+        self.events.lock().expect("event log poisoned").push(event);
+    }
+}
+
+impl LoggingLinearized {
+    fn record(&self, event: &'static str) {
+        self.events.lock().expect("event log poisoned").push(event);
+    }
+}
+
+impl LinearizedOp<f64> for LoggingLinearized {
     fn jvp(&self, input_tangents: &[Option<f64>]) -> tidu::AdResult<Vec<Option<f64>>> {
+        self.record("jvp");
         Ok(vec![input_tangents[0].map(|dx| self.slope * dx)])
     }
 
@@ -33,10 +53,39 @@ impl LinearizedOp<f64> for CountingLinearized {
         output_cotangents: &[Option<f64>],
         input_grad_mask: &[bool],
     ) -> tidu::AdResult<Vec<Option<f64>>> {
-        self.replay_vjp_counter.fetch_add(1, Ordering::SeqCst);
+        self.record("vjp");
         assert_eq!(input_grad_mask, &[true]);
         let grad_out = output_cotangents[0].unwrap_or(0.0);
         Ok(vec![Some(self.slope * grad_out)])
+    }
+}
+
+impl LinearizableOp<f64> for LoggingOp {
+    type Linearized = LoggingLinearized;
+
+    fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
+        self.record("primal");
+        Ok(vec![self.slope * *inputs[0]])
+    }
+
+    fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
+        Ok(scalar_schema())
+    }
+
+    fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
+        Ok(scalar_schema())
+    }
+
+    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
+        self.record("linearize");
+        Ok(LoggingLinearized {
+            slope: self.slope,
+            events: self.events.clone(),
+        })
+    }
+
+    fn checkpoint_hint(&self) -> CheckpointHint {
+        self.hint
     }
 }
 
@@ -49,131 +98,86 @@ fn scalar_schema() -> Schema {
     }
 }
 
-fn run_with_policy<O>(op: O, mode: CheckpointMode) -> tidu::AdResult<f64>
-where
-    O: LinearizableOp<f64> + Clone,
-{
-    let policy = AdExecutionPolicy {
-        checkpoint_mode: mode,
-    };
-    with_ad_policy(policy, || {
+fn run_backward(op: &LoggingOp, mode: Option<CheckpointMode>) -> tidu::AdResult<Vec<&'static str>> {
+    let run = || -> tidu::AdResult<()> {
         let x = Value::new(3.0_f64).requires_grad_(true);
         let y = op.apply_one(&[&x])?;
         y.backward()?;
-        x.grad()?.ok_or(tidu::AutodiffError::MissingNode)
-    })
-}
+        assert_eq!(x.grad()?, Some(op.slope));
+        Ok(())
+    };
 
-impl LinearizableOp<f64> for CheapReplay {
-    type Linearized = CountingLinearized;
-
-    fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
-        Ok(vec![*inputs[0] + 1.0])
+    match mode {
+        Some(mode) => with_ad_policy(
+            AdExecutionPolicy {
+                checkpoint_mode: mode,
+            },
+            run,
+        )?,
+        None => run()?,
     }
 
-    fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
-        REPLAY_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
-        Ok(CountingLinearized {
-            slope: 1.0,
-            replay_vjp_counter: &REPLAY_VJP_COUNT,
-        })
-    }
-}
-
-impl LinearizableOp<f64> for ExpensiveReplay {
-    type Linearized = CountingLinearized;
-
-    fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
-        Ok(vec![2.0 * *inputs[0]])
-    }
-
-    fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
-        RETAIN_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
-        Ok(CountingLinearized {
-            slope: 2.0,
-            replay_vjp_counter: &REPLAY_VJP_COUNT,
-        })
-    }
-}
-
-impl LinearizableOp<f64> for MustRetain {
-    type Linearized = CountingLinearized;
-
-    fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
-        Ok(vec![3.0 * *inputs[0]])
-    }
-
-    fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
-        Ok(scalar_schema())
-    }
-
-    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
-        RETAIN_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
-        Ok(CountingLinearized {
-            slope: 3.0,
-            replay_vjp_counter: &REPLAY_VJP_COUNT,
-        })
-    }
+    Ok(op.snapshot())
 }
 
 #[test]
-fn checkpoint_policy_controls_retain_vs_replay() -> tidu::AdResult<()> {
-    RETAIN_LINEARIZE_COUNT.store(0, Ordering::SeqCst);
-    REPLAY_LINEARIZE_COUNT.store(0, Ordering::SeqCst);
-    REPLAY_VJP_COUNT.store(0, Ordering::SeqCst);
-
-    assert_eq!(run_with_policy(CheapReplay, CheckpointMode::Off)?, 1.0);
+fn cheap_replay_policy_switches_between_retain_and_replay() -> tidu::AdResult<()> {
+    let retain = LoggingOp::new(1.0, CheckpointHint::CheapReplay);
     assert_eq!(
-        run_with_policy(CheapReplay, CheckpointMode::Conservative)?,
-        1.0
-    );
-    assert_eq!(
-        run_with_policy(CheapReplay, CheckpointMode::Aggressive)?,
-        1.0
+        run_backward(&retain, Some(CheckpointMode::Off))?,
+        vec!["primal", "linearize", "vjp"]
     );
 
-    assert_eq!(run_with_policy(ExpensiveReplay, CheckpointMode::Off)?, 2.0);
+    let replay = LoggingOp::new(1.0, CheckpointHint::CheapReplay);
     assert_eq!(
-        run_with_policy(ExpensiveReplay, CheckpointMode::Conservative)?,
-        2.0
-    );
-    assert_eq!(
-        run_with_policy(ExpensiveReplay, CheckpointMode::Aggressive)?,
-        2.0
+        run_backward(&replay, Some(CheckpointMode::Conservative))?,
+        vec!["primal", "primal", "linearize", "vjp"]
     );
 
-    assert_eq!(run_with_policy(MustRetain, CheckpointMode::Off)?, 3.0);
+    Ok(())
+}
+
+#[test]
+fn expensive_and_must_retain_hints_route_to_distinct_storage_modes() -> tidu::AdResult<()> {
+    let expensive_conservative = LoggingOp::new(2.0, CheckpointHint::ExpensiveReplay);
     assert_eq!(
-        run_with_policy(MustRetain, CheckpointMode::Conservative)?,
-        3.0
-    );
-    assert_eq!(
-        run_with_policy(MustRetain, CheckpointMode::Aggressive)?,
-        3.0
+        run_backward(&expensive_conservative, Some(CheckpointMode::Conservative))?,
+        vec!["primal", "linearize", "vjp"]
     );
 
-    assert_eq!(RETAIN_LINEARIZE_COUNT.load(Ordering::SeqCst), 6);
-    assert_eq!(REPLAY_LINEARIZE_COUNT.load(Ordering::SeqCst), 3);
-    assert_eq!(REPLAY_VJP_COUNT.load(Ordering::SeqCst), 9);
+    let expensive_aggressive = LoggingOp::new(2.0, CheckpointHint::ExpensiveReplay);
+    assert_eq!(
+        run_backward(&expensive_aggressive, Some(CheckpointMode::Aggressive))?,
+        vec!["primal", "primal", "linearize", "vjp"]
+    );
+
+    let must_retain = LoggingOp::new(3.0, CheckpointHint::MustRetain);
+    assert_eq!(
+        run_backward(&must_retain, Some(CheckpointMode::Aggressive))?,
+        vec!["primal", "linearize", "vjp"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn with_ad_policy_restores_default_policy_after_panic() -> tidu::AdResult<()> {
+    let panic_result = catch_unwind(AssertUnwindSafe(|| {
+        with_ad_policy(
+            AdExecutionPolicy {
+                checkpoint_mode: CheckpointMode::Conservative,
+            },
+            || -> tidu::AdResult<()> {
+                panic!("forced panic inside policy scope");
+            },
+        )
+    }));
+    assert!(panic_result.is_err());
+
+    let default_policy = LoggingOp::new(4.0, CheckpointHint::CheapReplay);
+    assert_eq!(
+        run_backward(&default_policy, None)?,
+        vec!["primal", "linearize", "vjp"]
+    );
     Ok(())
 }

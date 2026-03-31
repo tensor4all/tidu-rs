@@ -10,7 +10,8 @@
 //! - [`LinearizableOp`] for custom high-level operations,
 //! - [`LinearizedOp`] for local `jvp`/`vjp` access,
 //! - [`CheckpointMode`], [`AdExecutionPolicy`], and [`with_ad_policy`] for
-//!   checkpoint policy scopes.
+//!   checkpoint policy scopes,
+//! - [`CheckpointHint`] for advanced retain-vs-replay hints on custom ops.
 //!
 //! **Companion crate:** The doc examples below import scalar rule helpers
 //! (e.g. `powf_rrule`) from the
@@ -193,6 +194,6 @@ mod linearized;
 mod reverse_graph;
 mod value;
 
-pub use checkpoint::{with_ad_policy, AdExecutionPolicy, CheckpointMode};
+pub use checkpoint::{with_ad_policy, AdExecutionPolicy, CheckpointHint, CheckpointMode};
 pub use linearized::{LinearizableOp, LinearizedOp, Schema, SlotSchema};
 pub use value::Value;

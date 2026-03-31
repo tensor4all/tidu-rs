@@ -66,8 +66,8 @@ impl<V: Differentiable + 'static> Value<V> {
             .requires_grad
     }
 
-    /// Enable or disable gradient tracking.
-    pub fn requires_grad_(self, enabled: bool) -> Self {
+    /// Return a new value handle with gradient tracking enabled or disabled.
+    pub fn with_requires_grad(self, enabled: bool) -> Self {
         {
             let mut reverse = self.reverse.lock().expect("reverse state poisoned");
             reverse.requires_grad = enabled;

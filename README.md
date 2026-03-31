@@ -93,7 +93,7 @@ impl LinearizableOp<f64> for Cube {
     }
 }
 
-let x = Value::new(2.0).requires_grad_(true);
+let x = Value::new(2.0).with_requires_grad(true);
 let y = Cube.apply_one(&[&x]).unwrap();
 y.backward().unwrap();
 assert_eq!(x.grad().unwrap().unwrap(), 12.0);
@@ -131,7 +131,7 @@ See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
 ┌─────────────────────────────────────────────────────┐
 │                      Value<V>                       │
 │  Public value handle for eager reverse-mode AD.     │
-│  Exposes requires_grad_, backward, and grad().      │
+│  Exposes with_requires_grad, backward, and grad().  │
 ├─────────────────────────────────────────────────────┤
 │                LinearizableOp<V>                    │
 │  High-level custom op API: primal + linearize.      │

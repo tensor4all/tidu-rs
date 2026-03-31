@@ -91,14 +91,14 @@ impl LinearizableOp<Pair> for ScaleByTwo {
 
 #[test]
 fn pullback_with_seed_accepts_tensor_like_outputs() {
-    let x = Value::new(Pair { x: 1.0, y: -2.0 }).requires_grad_(true);
+    let x = Value::new(Pair { x: 1.0, y: -2.0 }).with_requires_grad(true);
     x.backward_with_seed(Pair { x: 3.0, y: 4.0 }).unwrap();
     assert_eq!(x.grad().unwrap(), Some(Pair { x: 3.0, y: 4.0 }));
 }
 
 #[test]
 fn plain_pullback_still_requires_scalar_outputs() {
-    let x = Value::new(Pair { x: 1.0, y: -2.0 }).requires_grad_(true);
+    let x = Value::new(Pair { x: 1.0, y: -2.0 }).with_requires_grad(true);
     let err = match x.backward() {
         Ok(_) => panic!("plain pullback should still reject non-scalar outputs"),
         Err(err) => err,
@@ -111,7 +111,7 @@ fn plain_pullback_still_requires_scalar_outputs() {
 
 #[test]
 fn seeded_reverse_mode_runs_through_linearized_vjp() {
-    let x = Value::new(Pair { x: 1.0, y: -2.0 }).requires_grad_(true);
+    let x = Value::new(Pair { x: 1.0, y: -2.0 }).with_requires_grad(true);
     let y = ScaleByTwo.apply_one(&[&x]).unwrap();
     y.backward_with_seed(Pair { x: 3.0, y: 4.0 }).unwrap();
     assert_eq!(x.grad().unwrap(), Some(Pair { x: 6.0, y: 8.0 }));

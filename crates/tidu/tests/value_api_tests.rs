@@ -55,7 +55,7 @@ impl LinearizableOp<f64> for Square {
 
 #[test]
 fn backward_accumulates_leaf_gradients_without_explicit_tape() -> AdResult<()> {
-    let x = Value::new(2.0).requires_grad_(true);
+    let x = Value::new(2.0).with_requires_grad(true);
     let y = Square.apply_one(&[&x])?;
     y.backward()?;
 
@@ -65,7 +65,7 @@ fn backward_accumulates_leaf_gradients_without_explicit_tape() -> AdResult<()> {
 
 #[test]
 fn zero_grad_clears_leaf_gradient() -> AdResult<()> {
-    let x = Value::new(3.0).requires_grad_(true);
+    let x = Value::new(3.0).with_requires_grad(true);
     let y = Square.apply_one(&[&x])?;
     y.backward()?;
 
@@ -77,7 +77,7 @@ fn zero_grad_clears_leaf_gradient() -> AdResult<()> {
 
 #[test]
 fn grad_wrt_returns_functional_gradient_without_touching_leaf_cache() -> AdResult<()> {
-    let x = Value::new(4.0).requires_grad_(true);
+    let x = Value::new(4.0).with_requires_grad(true);
     let y = Square.apply_one(&[&x])?;
 
     let grads = y.grad_wrt_with_seed(1.0, &[&x])?;
@@ -89,12 +89,12 @@ fn grad_wrt_returns_functional_gradient_without_touching_leaf_cache() -> AdResul
 
 #[test]
 fn shares_reverse_graph_distinguishes_connected_and_disconnected_outputs() -> AdResult<()> {
-    let x = Value::new(2.0).requires_grad_(true);
+    let x = Value::new(2.0).with_requires_grad(true);
     let y = Square.apply_one(&[&x])?;
     let z = Square.apply_one(&[&x])?;
     assert!(y.shares_reverse_graph(&z));
 
-    let other = Value::new(3.0).requires_grad_(true);
+    let other = Value::new(3.0).with_requires_grad(true);
     let w = Square.apply_one(&[&other])?;
     assert!(!y.shares_reverse_graph(&w));
     Ok(())

@@ -59,7 +59,7 @@ impl LinearizableOp<f64> for Square {
 
 #[test]
 fn linearized_op_drives_reverse_and_forward_contract() -> tidu::AdResult<()> {
-    let x = Value::new(3.0_f64).requires_grad_(true);
+    let x = Value::new(3.0_f64).with_requires_grad(true);
     let y = Square.apply_one(&[&x])?;
     y.backward()?;
     assert_eq!(x.grad()?, Some(6.0));
@@ -136,8 +136,8 @@ impl LinearizableOp<f64> for Multiply {
 
 #[test]
 fn linearized_vjp_handles_two_inputs_one_output() -> tidu::AdResult<()> {
-    let lhs = Value::new(2.0_f64).requires_grad_(true);
-    let rhs = Value::new(3.0_f64).requires_grad_(true);
+    let lhs = Value::new(2.0_f64).with_requires_grad(true);
+    let rhs = Value::new(3.0_f64).with_requires_grad(true);
     let out = Multiply.apply_one(&[&lhs, &rhs])?;
 
     out.backward()?;
@@ -212,7 +212,7 @@ impl LinearizableOp<f64> for SquareWithAux {
 
 #[test]
 fn auxiliary_outputs_stay_detached_while_diff_outputs_backpropagate() -> tidu::AdResult<()> {
-    let x = Value::new(4.0_f64).requires_grad_(true);
+    let x = Value::new(4.0_f64).with_requires_grad(true);
     let outputs = SquareWithAux.apply(&[&x])?;
 
     assert_eq!(outputs.len(), 2);
@@ -279,7 +279,7 @@ impl LinearizableOp<f64> for Freeze {
 fn nondifferentiable_outputs_return_detached_values_without_linearizing() -> tidu::AdResult<()> {
     FREEZE_LINEARIZE_COUNT.store(0, Ordering::SeqCst);
 
-    let x = Value::new(2.0_f64).requires_grad_(true);
+    let x = Value::new(2.0_f64).with_requires_grad(true);
     let y = Freeze.apply_one(&[&x])?;
 
     assert_eq!(*y.primal(), 3.0);
@@ -386,7 +386,7 @@ impl LinearizableOp<TaggedScalar> for TaggedSquare {
 
 #[test]
 fn linearized_ops_support_custom_differentiable_value_types() -> tidu::AdResult<()> {
-    let x = Value::new(TaggedScalar { value: 3.0, tag: 7 }).requires_grad_(true);
+    let x = Value::new(TaggedScalar { value: 3.0, tag: 7 }).with_requires_grad(true);
     let y = TaggedSquare.apply_one(&[&x])?;
 
     assert_eq!(*y.primal(), TaggedScalar { value: 9.0, tag: 7 });

@@ -100,7 +100,7 @@ fn scalar_schema() -> Schema {
 
 fn run_backward(op: &LoggingOp, mode: Option<CheckpointMode>) -> tidu::AdResult<Vec<&'static str>> {
     let run = || -> tidu::AdResult<()> {
-        let x = Value::new(3.0_f64).requires_grad_(true);
+        let x = Value::new(3.0_f64).with_requires_grad(true);
         let y = op.apply_one(&[&x])?;
         y.backward()?;
         assert_eq!(x.grad()?, Some(op.slope));

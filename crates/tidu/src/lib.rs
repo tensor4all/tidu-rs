@@ -91,7 +91,7 @@
 //!     }
 //! }
 //!
-//! let x = Value::new(2.0).requires_grad_(true);
+//! let x = Value::new(2.0).with_requires_grad(true);
 //! let y = Cube.apply_one(&[&x]).unwrap();
 //! y.backward().unwrap();
 //! assert_eq!(x.grad().unwrap().unwrap(), 12.0);

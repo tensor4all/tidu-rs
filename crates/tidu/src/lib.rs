@@ -193,6 +193,6 @@ mod linearized;
 mod reverse_graph;
 mod value;
 
-pub use checkpoint::{AdExecutionPolicy, CheckpointMode, with_ad_policy};
+pub use checkpoint::{with_ad_policy, AdExecutionPolicy, CheckpointMode};
 pub use linearized::{LinearizableOp, LinearizedOp, Schema, SlotSchema};
 pub use value::Value;

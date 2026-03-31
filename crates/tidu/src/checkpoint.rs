@@ -28,7 +28,7 @@ pub(crate) enum StorageDecision {
 
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckpointClass {
+pub enum CheckpointHint {
     CheapReplay,
     ExpensiveReplay,
     MustRetain,
@@ -55,13 +55,13 @@ pub(crate) fn current_ad_policy() -> AdExecutionPolicy {
 
 pub(crate) fn storage_decision(
     policy: AdExecutionPolicy,
-    checkpoint_class: CheckpointClass,
+    checkpoint_hint: CheckpointHint,
 ) -> StorageDecision {
-    match (policy.checkpoint_mode, checkpoint_class) {
-        (_, CheckpointClass::MustRetain) => StorageDecision::Retain,
+    match (policy.checkpoint_mode, checkpoint_hint) {
+        (_, CheckpointHint::MustRetain) => StorageDecision::Retain,
         (CheckpointMode::Off, _) => StorageDecision::Retain,
-        (CheckpointMode::Conservative, CheckpointClass::CheapReplay) => StorageDecision::Replay,
-        (CheckpointMode::Conservative, CheckpointClass::ExpensiveReplay) => StorageDecision::Retain,
+        (CheckpointMode::Conservative, CheckpointHint::CheapReplay) => StorageDecision::Replay,
+        (CheckpointMode::Conservative, CheckpointHint::ExpensiveReplay) => StorageDecision::Retain,
         (CheckpointMode::Aggressive, _) => StorageDecision::Replay,
     }
 }

@@ -9,6 +9,10 @@ fn src_file(path: &str) -> String {
     fs::read_to_string(crate_root().join("src").join(path)).expect("read source file")
 }
 
+fn src_subfile(path: &str) -> String {
+    fs::read_to_string(crate_root().join("src").join(path)).expect("read source subfile")
+}
+
 fn repo_file(path: &str) -> String {
     fs::read_to_string(crate_root().join("..").join("..").join(path)).expect("read repo file")
 }
@@ -20,7 +24,10 @@ fn tidu_root_surface_exports_only_linearize_first_api() {
     for required in [
         "pub use value::Value;",
         "pub use linearized::{LinearizableOp, LinearizedOp, Schema, SlotSchema};",
-        "pub use checkpoint::{AdExecutionPolicy, CheckpointMode, with_ad_policy};",
+        "pub use checkpoint::{",
+        "AdExecutionPolicy",
+        "CheckpointMode",
+        "with_ad_policy",
     ] {
         assert!(
             lib_rs.contains(required),
@@ -90,4 +97,23 @@ fn crate_level_rustdoc_leads_with_linearize_first_examples() {
             "crate-level rustdoc should not lead with `{forbidden}`"
         );
     }
+}
+
+#[test]
+fn checkpoint_boundary_uses_public_hint_not_internal_class_name() {
+    let checkpoint_rs = src_subfile("checkpoint.rs");
+    let linearized_rs = src_subfile("linearized.rs");
+
+    assert!(
+        checkpoint_rs.contains("pub enum CheckpointHint"),
+        "checkpoint.rs should expose CheckpointHint as the public trait-facing type"
+    );
+    assert!(
+        !checkpoint_rs.contains("pub enum CheckpointClass"),
+        "checkpoint.rs should not expose CheckpointClass publicly"
+    );
+    assert!(
+        linearized_rs.contains("fn checkpoint_hint(&self) -> CheckpointHint"),
+        "LinearizableOp should use checkpoint_hint instead of checkpoint_class"
+    );
 }

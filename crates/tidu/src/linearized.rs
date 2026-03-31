@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::checkpoint::{current_ad_policy, storage_decision, CheckpointClass, StorageDecision};
+use crate::checkpoint::{current_ad_policy, storage_decision, CheckpointHint, StorageDecision};
 use crate::reverse_graph::{ReverseEdge, ReverseNode, StoredNodeLinearization};
 use crate::{AdResult, AutodiffError, Differentiable, Value};
 
@@ -52,8 +52,8 @@ pub trait LinearizableOp<V: Differentiable + Send + Sync + 'static>: Send + Sync
     fn linearize(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Self::Linearized>;
 
     #[doc(hidden)]
-    fn checkpoint_class(&self) -> CheckpointClass {
-        CheckpointClass::CheapReplay
+    fn checkpoint_hint(&self) -> CheckpointHint {
+        CheckpointHint::CheapReplay
     }
 
     fn apply(&self, inputs: &[&Value<V>]) -> AdResult<Vec<Value<V>>>
@@ -99,7 +99,7 @@ pub trait LinearizableOp<V: Differentiable + Send + Sync + 'static>: Send + Sync
 
         let linearized = self.linearize(&primals, &outputs)?;
         let stored_linearization =
-            match storage_decision(current_ad_policy(), self.checkpoint_class()) {
+            match storage_decision(current_ad_policy(), self.checkpoint_hint()) {
                 StorageDecision::Retain | StorageDecision::Replay => {
                     StoredNodeLinearization::retained(linearized)
                 }

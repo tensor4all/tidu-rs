@@ -1,7 +1,7 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::reverse_graph::{ReverseEdge, ReverseNode, ReverseRule};
+use crate::checkpoint::{current_ad_policy, storage_decision, CheckpointClass, StorageDecision};
+use crate::reverse_graph::{ReverseEdge, ReverseNode, StoredNodeLinearization};
 use crate::{AdResult, AutodiffError, Differentiable, Value};
 
 /// AD-role metadata for one input or output slot.
@@ -29,7 +29,7 @@ pub struct Schema {
 }
 
 impl Schema {
-    fn validate_len(&self, kind: &str, expected_len: usize) -> AdResult<()> {
+    pub(crate) fn validate_len(&self, kind: &str, expected_len: usize) -> AdResult<()> {
         if self.slots.len() != expected_len {
             return Err(AutodiffError::InvalidArgument(format!(
                 "{kind} schema returned {} slots for {expected_len} values",
@@ -43,47 +43,19 @@ impl Schema {
     }
 }
 
-/// High-level custom autograd op trait.
-pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
-    type SavedBackward: Send + Sync + 'static;
-    type SavedJvp: Send + Sync + 'static;
+pub trait LinearizableOp<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
+    type Linearized: LinearizedOp<V> + Send + Sync + 'static;
 
-    /// Compute the primal outputs of the operation.
     fn primal(&self, inputs: &[&V]) -> AdResult<Vec<V>>;
-
-    /// Declare which inputs are differentiable for this call.
     fn input_schema(&self, inputs: &[&V]) -> AdResult<Schema>;
-
-    /// Declare which outputs are differentiable after seeing the primal outputs.
     fn output_schema(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Schema>;
+    fn linearize(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Self::Linearized>;
 
-    /// Capture reverse-mode state only when gradients are required.
-    fn save_for_backward(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Self::SavedBackward>;
-
-    /// Capture forward-mode state only when JVP is requested.
-    fn save_for_jvp(&self, inputs: &[&V], outputs: &[V]) -> AdResult<Self::SavedJvp>;
-
-    /// Whether undefined cotangents should be materialized to zero.
-    fn materialize_grads(&self) -> bool {
-        false
+    #[doc(hidden)]
+    fn checkpoint_class(&self) -> CheckpointClass {
+        CheckpointClass::CheapReplay
     }
 
-    /// Compute the reverse-mode pullback in input order.
-    fn backward(
-        &self,
-        saved: &Self::SavedBackward,
-        grad_outputs: &[Option<V::Tangent>],
-        input_grad_mask: &[bool],
-    ) -> AdResult<Vec<Option<V::Tangent>>>;
-
-    /// Compute the forward-mode pushforward in output order.
-    fn jvp(
-        &self,
-        saved: &Self::SavedJvp,
-        tangents: &[Option<V::Tangent>],
-    ) -> AdResult<Vec<Option<V::Tangent>>>;
-
-    /// Apply the operation to tracked inputs.
     fn apply(&self, inputs: &[&Value<V>]) -> AdResult<Vec<Value<V>>>
     where
         Self: Sized + Clone,
@@ -113,7 +85,6 @@ pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
             return Ok(outputs.into_iter().map(Value::new).collect());
         }
 
-        let saved = self.save_for_backward(&primals, &outputs)?;
         let input_nodes = inputs
             .iter()
             .zip(&input_schema.slots)
@@ -126,17 +97,20 @@ pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
             })
             .collect::<AdResult<Vec<_>>>()?;
 
+        let linearized = self.linearize(&primals, &outputs)?;
+        let stored_linearization =
+            match storage_decision(current_ad_policy(), self.checkpoint_class()) {
+                StorageDecision::Retain | StorageDecision::Replay => {
+                    StoredNodeLinearization::retained(linearized)
+                }
+            };
+
         let output_count = output_schema.slots.len();
         let node = Arc::new(ReverseNode::new(
             input_nodes,
             output_count,
-            Box::new(OpRule::<Self, V> {
-                op: self.clone(),
-                saved,
-                input_grad_mask,
-                materialize_grads: self.materialize_grads(),
-                _marker: PhantomData,
-            }),
+            input_grad_mask,
+            stored_linearization,
         ));
 
         Ok(outputs
@@ -158,7 +132,6 @@ pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
             .collect())
     }
 
-    /// Apply the operation and require exactly one output.
     fn apply_one(&self, inputs: &[&Value<V>]) -> AdResult<Value<V>>
     where
         Self: Sized + Clone,
@@ -166,7 +139,7 @@ pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
         let mut outputs = self.apply(inputs)?;
         if outputs.len() != 1 {
             return Err(AutodiffError::InvalidArgument(format!(
-                "Op::apply_one expected exactly 1 output, got {}",
+                "LinearizableOp::apply_one expected exactly 1 output, got {}",
                 outputs.len()
             )));
         }
@@ -174,26 +147,12 @@ pub trait Op<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
     }
 }
 
-struct OpRule<O, V>
-where
-    O: Op<V>,
-    V: Differentiable + Send + Sync + 'static,
-{
-    op: O,
-    saved: O::SavedBackward,
-    input_grad_mask: Vec<bool>,
-    materialize_grads: bool,
-    _marker: PhantomData<V>,
-}
+pub trait LinearizedOp<V: Differentiable + Send + Sync + 'static>: Send + Sync + 'static {
+    fn jvp(&self, input_tangents: &[Option<V::Tangent>]) -> AdResult<Vec<Option<V::Tangent>>>;
 
-impl<O, V> ReverseRule<V> for OpRule<O, V>
-where
-    O: Op<V>,
-    V: Differentiable + Send + Sync + 'static,
-{
-    fn pullback(&self, grad_outputs: &[Option<V::Tangent>]) -> AdResult<Vec<Option<V::Tangent>>> {
-        let _ = self.materialize_grads;
-        self.op
-            .backward(&self.saved, grad_outputs, &self.input_grad_mask)
-    }
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<V::Tangent>>>;
 }

@@ -187,12 +187,12 @@
 
 pub use chainrules_core::{AdResult, AutodiffError, Differentiable};
 
-mod engine;
-pub mod expert;
-mod function;
+mod checkpoint;
+mod graph_task;
+mod linearized;
 mod reverse_graph;
 mod value;
 
-pub use engine::DualValue;
-pub use function::{Op, Schema, SlotSchema};
+pub use checkpoint::{with_ad_policy, AdExecutionPolicy, CheckpointMode};
+pub use linearized::{LinearizableOp, LinearizedOp, Schema, SlotSchema};
 pub use value::Value;

@@ -1,7 +1,9 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{AdResult, AutodiffError, Differentiable};
+use crate::graph_task::GraphTask;
+use crate::linearized::LinearizedOp;
+use crate::{AdResult, Differentiable};
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
@@ -44,26 +46,79 @@ impl<V: Differentiable> Clone for ReverseInput<V> {
     }
 }
 
-pub(crate) trait ReverseRule<V: Differentiable>: Send + Sync {
-    fn pullback(&self, grad_outputs: &[Option<V::Tangent>]) -> AdResult<Vec<Option<V::Tangent>>>;
-}
-
 pub(crate) struct ReverseNode<V: Differentiable> {
     pub(crate) parents: Vec<Option<ReverseInput<V>>>,
     pub(crate) output_count: usize,
-    pub(crate) rule: Box<dyn ReverseRule<V>>,
+    input_grad_mask: Vec<bool>,
+    linearization: StoredNodeLinearization<V>,
 }
 
 impl<V: Differentiable> ReverseNode<V> {
     pub(crate) fn new(
         parents: Vec<Option<ReverseInput<V>>>,
         output_count: usize,
-        rule: Box<dyn ReverseRule<V>>,
+        input_grad_mask: Vec<bool>,
+        linearization: StoredNodeLinearization<V>,
     ) -> Self {
         Self {
             parents,
             output_count,
-            rule,
+            input_grad_mask,
+            linearization,
+        }
+    }
+
+    pub(crate) fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+    ) -> AdResult<Vec<Option<V::Tangent>>> {
+        self.linearization
+            .vjp(output_cotangents, &self.input_grad_mask)
+    }
+}
+
+pub(crate) trait StoredLinearization<V: Differentiable>: Send + Sync {
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<V::Tangent>>>;
+}
+
+impl<V, L> StoredLinearization<V> for L
+where
+    V: Differentiable + Send + Sync + 'static,
+    L: LinearizedOp<V> + Send + Sync + 'static,
+{
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<V::Tangent>>> {
+        LinearizedOp::vjp(self, output_cotangents, input_grad_mask)
+    }
+}
+
+pub(crate) enum StoredNodeLinearization<V: Differentiable> {
+    Retained(Box<dyn StoredLinearization<V>>),
+}
+
+impl<V: Differentiable> StoredNodeLinearization<V> {
+    pub(crate) fn retained<L>(linearized: L) -> Self
+    where
+        V: Send + Sync + 'static,
+        L: LinearizedOp<V> + Send + Sync + 'static,
+    {
+        Self::Retained(Box::new(linearized))
+    }
+
+    pub(crate) fn vjp(
+        &self,
+        output_cotangents: &[Option<V::Tangent>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<V::Tangent>>> {
+        match self {
+            Self::Retained(linearization) => linearization.vjp(output_cotangents, input_grad_mask),
         }
     }
 }
@@ -88,7 +143,7 @@ pub(crate) fn zero_leaf_grad<V: Differentiable>(handle: &LeafHandle<V>) {
     lock_unpoisoned(handle).grad = None;
 }
 
-fn accumulate_leaf_grad<V>(handle: &LeafHandle<V>, grad: V::Tangent)
+pub(crate) fn accumulate_leaf_grad<V>(handle: &LeafHandle<V>, grad: V::Tangent)
 where
     V: Differentiable,
     V::Tangent: Clone,
@@ -100,260 +155,12 @@ where
     };
 }
 
-fn node_key<V: Differentiable>(node: &Arc<ReverseNode<V>>) -> usize {
+pub(crate) fn node_key<V: Differentiable>(node: &Arc<ReverseNode<V>>) -> usize {
     Arc::as_ptr(node) as *const () as usize
 }
 
-fn leaf_key<V: Differentiable>(handle: &LeafHandle<V>) -> usize {
+pub(crate) fn leaf_key<V: Differentiable>(handle: &LeafHandle<V>) -> usize {
     Arc::as_ptr(handle) as *const () as usize
-}
-
-enum TaskInput<V: Differentiable> {
-    Leaf(LeafHandle<V>),
-    Edge { node_id: usize, output_slot: usize },
-}
-
-impl<V: Differentiable> Clone for TaskInput<V> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Leaf(handle) => Self::Leaf(handle.clone()),
-            Self::Edge {
-                node_id,
-                output_slot,
-            } => Self::Edge {
-                node_id: *node_id,
-                output_slot: *output_slot,
-            },
-        }
-    }
-}
-
-struct TaskNode<V: Differentiable> {
-    node: Arc<ReverseNode<V>>,
-    parents: Vec<Option<TaskInput<V>>>,
-    grad_outputs: Vec<Option<V::Tangent>>,
-    live_output_slots: Vec<bool>,
-    remaining_contributions: Vec<usize>,
-    pending_output_slots: usize,
-    enqueued: bool,
-}
-
-struct GraphTask<V: Differentiable> {
-    nodes: Vec<TaskNode<V>>,
-    node_ids: HashMap<usize, usize>,
-    ready: VecDeque<usize>,
-    edge_queries: HashMap<(usize, usize), Vec<usize>>,
-    leaf_queries: HashMap<usize, Vec<usize>>,
-    query_grads: Vec<Option<V::Tangent>>,
-}
-
-impl<V: Differentiable> GraphTask<V> {
-    fn from_root(root: &ReverseEdge<V>, seed: V::Tangent) -> AdResult<Self> {
-        let mut task = Self {
-            nodes: Vec::new(),
-            node_ids: HashMap::new(),
-            ready: VecDeque::new(),
-            edge_queries: HashMap::new(),
-            leaf_queries: HashMap::new(),
-            query_grads: Vec::new(),
-        };
-        task.discover(&root.node);
-        task.finalize_parents_and_contributions(root);
-        task.seed_root(root, seed)?;
-        Ok(task)
-    }
-
-    fn discover(&mut self, node: &Arc<ReverseNode<V>>) {
-        let key = node_key(node);
-        if self.node_ids.contains_key(&key) {
-            return;
-        }
-        let task_node_id = self.nodes.len();
-        self.node_ids.insert(key, task_node_id);
-        self.nodes.push(TaskNode {
-            node: node.clone(),
-            parents: Vec::new(),
-            grad_outputs: (0..node.output_count).map(|_| None).collect(),
-            live_output_slots: vec![false; node.output_count],
-            remaining_contributions: vec![0; node.output_count],
-            pending_output_slots: 0,
-            enqueued: false,
-        });
-        for parent in &node.parents {
-            if let Some(ReverseInput::Edge(edge)) = parent {
-                self.discover(&edge.node);
-            }
-        }
-    }
-
-    fn finalize_parents_and_contributions(&mut self, root: &ReverseEdge<V>) {
-        for task_node_id in 0..self.nodes.len() {
-            let parents = self.nodes[task_node_id].node.parents.clone();
-            let mut normalized_parents = Vec::with_capacity(parents.len());
-            for parent in parents {
-                let normalized = match parent {
-                    Some(ReverseInput::Leaf(handle)) => Some(TaskInput::Leaf(handle)),
-                    Some(ReverseInput::Edge(edge)) => {
-                        let parent_id = self.node_ids[&node_key(&edge.node)];
-                        self.nodes[parent_id].live_output_slots[edge.output_slot] = true;
-                        self.nodes[parent_id].remaining_contributions[edge.output_slot] += 1;
-                        Some(TaskInput::Edge {
-                            node_id: parent_id,
-                            output_slot: edge.output_slot,
-                        })
-                    }
-                    None => None,
-                };
-                normalized_parents.push(normalized);
-            }
-            self.nodes[task_node_id].parents = normalized_parents;
-        }
-
-        let root_id = self.node_ids[&node_key(&root.node)];
-        self.nodes[root_id].live_output_slots[root.output_slot] = true;
-        self.nodes[root_id].remaining_contributions[root.output_slot] += 1;
-
-        for node in &mut self.nodes {
-            node.pending_output_slots = node
-                .live_output_slots
-                .iter()
-                .zip(&node.remaining_contributions)
-                .filter(|(live, count)| **live && **count > 0)
-                .count();
-        }
-    }
-
-    fn seed_root(&mut self, root: &ReverseEdge<V>, seed: V::Tangent) -> AdResult<()> {
-        let root_id = self.node_ids[&node_key(&root.node)];
-        self.accumulate_slot(root_id, root.output_slot, seed)
-    }
-
-    fn register_queries(&mut self, wrt: &[Option<ReverseInput<V>>]) {
-        self.query_grads = (0..wrt.len()).map(|_| None).collect();
-        for (index, target) in wrt.iter().enumerate() {
-            match target {
-                Some(ReverseInput::Leaf(handle)) => {
-                    self.leaf_queries
-                        .entry(leaf_key(handle))
-                        .or_default()
-                        .push(index);
-                }
-                Some(ReverseInput::Edge(edge)) => {
-                    if let Some(&node_id) = self.node_ids.get(&node_key(&edge.node)) {
-                        self.edge_queries
-                            .entry((node_id, edge.output_slot))
-                            .or_default()
-                            .push(index);
-                    }
-                }
-                None => {}
-            }
-        }
-    }
-
-    fn accumulate_query_slots(&mut self, query_slots: &[usize], grad: &V::Tangent)
-    where
-        V::Tangent: Clone,
-    {
-        for &query_slot in query_slots {
-            let slot = &mut self.query_grads[query_slot];
-            match slot.take() {
-                Some(existing) => *slot = Some(V::accumulate_tangent(existing, grad)),
-                None => *slot = Some(grad.clone()),
-            }
-        }
-    }
-
-    fn accumulate_slot(
-        &mut self,
-        task_node_id: usize,
-        output_slot: usize,
-        grad: V::Tangent,
-    ) -> AdResult<()> {
-        let Some(output_len) = self
-            .nodes
-            .get(task_node_id)
-            .map(|node| node.grad_outputs.len())
-        else {
-            return Err(AutodiffError::MissingNode);
-        };
-        if output_slot >= output_len {
-            return Err(AutodiffError::InvalidArgument(format!(
-                "output slot {output_slot} is out of bounds for task node {task_node_id}"
-            )));
-        }
-        if let Some(query_slots) = self.edge_queries.get(&(task_node_id, output_slot)).cloned() {
-            self.accumulate_query_slots(&query_slots, &grad);
-        }
-        let node = &mut self.nodes[task_node_id];
-        let slot = &mut node.grad_outputs[output_slot];
-        match slot.take() {
-            Some(existing) => *slot = Some(V::accumulate_tangent(existing, &grad)),
-            None => *slot = Some(grad),
-        }
-        if node.remaining_contributions[output_slot] == 0 {
-            return Err(AutodiffError::InvalidArgument(format!(
-                "received too many cotangent contributions for task node {task_node_id} output slot {output_slot}"
-            )));
-        }
-        node.remaining_contributions[output_slot] -= 1;
-        if node.live_output_slots[output_slot] && node.remaining_contributions[output_slot] == 0 {
-            debug_assert!(node.pending_output_slots > 0);
-            node.pending_output_slots -= 1;
-        }
-        if node.pending_output_slots == 0 && !node.enqueued {
-            node.enqueued = true;
-            self.ready.push_back(task_node_id);
-        }
-        Ok(())
-    }
-
-    fn run(mut self, accumulate_leafs: bool) -> AdResult<Vec<Option<V::Tangent>>>
-    where
-        V::Tangent: Clone,
-    {
-        while let Some(task_node_id) = self.ready.pop_front() {
-            let grads = {
-                let node = &mut self.nodes[task_node_id];
-                node.enqueued = false;
-                let grad_outputs = std::mem::take(&mut node.grad_outputs);
-                node.node.rule.pullback(&grad_outputs)?
-            };
-
-            if grads.len() != self.nodes[task_node_id].parents.len() {
-                return Err(AutodiffError::InvalidArgument(format!(
-                    "reverse rule returned {} gradients for {} inputs",
-                    grads.len(),
-                    self.nodes[task_node_id].parents.len()
-                )));
-            }
-
-            let parents = self.nodes[task_node_id].parents.clone();
-            for (parent, grad) in parents.into_iter().zip(grads.into_iter()) {
-                let Some(grad) = grad else {
-                    continue;
-                };
-                match parent {
-                    Some(TaskInput::Leaf(handle)) => {
-                        if let Some(query_slots) =
-                            self.leaf_queries.get(&leaf_key(&handle)).cloned()
-                        {
-                            self.accumulate_query_slots(&query_slots, &grad);
-                        }
-                        if accumulate_leafs {
-                            accumulate_leaf_grad::<V>(&handle, grad);
-                        }
-                    }
-                    Some(TaskInput::Edge {
-                        node_id,
-                        output_slot,
-                    }) => self.accumulate_slot(node_id, output_slot, grad)?,
-                    None => {}
-                }
-            }
-        }
-        Ok(self.query_grads)
-    }
 }
 
 pub(crate) fn backward_from<V>(input: ReverseInput<V>, seed: V::Tangent) -> AdResult<()>

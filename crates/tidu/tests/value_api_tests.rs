@@ -1,11 +1,30 @@
-use tidu::{AdResult, Op, Schema, SlotSchema, Value};
+use tidu::{AdResult, LinearizableOp, LinearizedOp, Schema, SlotSchema, Value};
 
 #[derive(Clone, Copy)]
 struct Square;
 
-impl Op<f64> for Square {
-    type SavedBackward = f64;
-    type SavedJvp = ();
+struct SquareLinearized {
+    x: f64,
+}
+
+impl LinearizedOp<f64> for SquareLinearized {
+    fn jvp(&self, input_tangents: &[Option<f64>]) -> AdResult<Vec<Option<f64>>> {
+        Ok(vec![input_tangents[0].map(|dx| 2.0 * self.x * dx)])
+    }
+
+    fn vjp(
+        &self,
+        output_cotangents: &[Option<f64>],
+        input_grad_mask: &[bool],
+    ) -> AdResult<Vec<Option<f64>>> {
+        assert_eq!(input_grad_mask, &[true]);
+        let grad_out = output_cotangents[0].unwrap_or(0.0);
+        Ok(vec![Some(2.0 * self.x * grad_out)])
+    }
+}
+
+impl LinearizableOp<f64> for Square {
+    type Linearized = SquareLinearized;
 
     fn primal(&self, inputs: &[&f64]) -> AdResult<Vec<f64>> {
         Ok(vec![*inputs[0] * *inputs[0]])
@@ -29,31 +48,8 @@ impl Op<f64> for Square {
         })
     }
 
-    fn save_for_backward(
-        &self,
-        inputs: &[&f64],
-        _outputs: &[f64],
-    ) -> AdResult<Self::SavedBackward> {
-        Ok(*inputs[0])
-    }
-
-    fn save_for_jvp(&self, _inputs: &[&f64], _outputs: &[f64]) -> AdResult<Self::SavedJvp> {
-        Ok(())
-    }
-
-    fn backward(
-        &self,
-        saved: &Self::SavedBackward,
-        grad_outputs: &[Option<f64>],
-        input_grad_mask: &[bool],
-    ) -> AdResult<Vec<Option<f64>>> {
-        assert_eq!(input_grad_mask, &[true]);
-        let grad_out = grad_outputs[0].unwrap_or(0.0);
-        Ok(vec![Some(2.0 * *saved * grad_out)])
-    }
-
-    fn jvp(&self, _saved: &Self::SavedJvp, tangents: &[Option<f64>]) -> AdResult<Vec<Option<f64>>> {
-        Ok(vec![tangents[0].map(|dx| 2.0 * dx)])
+    fn linearize(&self, inputs: &[&f64], _outputs: &[f64]) -> AdResult<Self::Linearized> {
+        Ok(SquareLinearized { x: *inputs[0] })
     }
 }
 

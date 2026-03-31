@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tidu::{
-    AdExecutionPolicy, CheckpointMode, LinearizableOp, LinearizedOp, Schema, SlotSchema, Value,
-    with_ad_policy,
+    with_ad_policy, AdExecutionPolicy, CheckpointMode, LinearizableOp, LinearizedOp, Schema,
+    SlotSchema, Value,
 };
 
 static RETAIN_LINEARIZE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -60,9 +60,7 @@ where
         let x = Value::new(3.0_f64).requires_grad_(true);
         let y = op.apply_one(&[&x])?;
         y.backward()?;
-        x.grad()?.ok_or_else(|| {
-            tidu::AutodiffError::Internal("gradient should be populated".to_owned())
-        })
+        x.grad()?.ok_or(tidu::AutodiffError::MissingNode)
     })
 }
 
@@ -81,11 +79,7 @@ impl LinearizableOp<f64> for CheapReplay {
         Ok(scalar_schema())
     }
 
-    fn linearize(
-        &self,
-        _inputs: &[&f64],
-        _outputs: &[f64],
-    ) -> tidu::AdResult<Self::Linearized> {
+    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
         REPLAY_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
         Ok(CountingLinearized {
             slope: 1.0,
@@ -109,11 +103,7 @@ impl LinearizableOp<f64> for ExpensiveReplay {
         Ok(scalar_schema())
     }
 
-    fn linearize(
-        &self,
-        _inputs: &[&f64],
-        _outputs: &[f64],
-    ) -> tidu::AdResult<Self::Linearized> {
+    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
         RETAIN_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
         Ok(CountingLinearized {
             slope: 2.0,
@@ -137,11 +127,7 @@ impl LinearizableOp<f64> for MustRetain {
         Ok(scalar_schema())
     }
 
-    fn linearize(
-        &self,
-        _inputs: &[&f64],
-        _outputs: &[f64],
-    ) -> tidu::AdResult<Self::Linearized> {
+    fn linearize(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Self::Linearized> {
         RETAIN_LINEARIZE_COUNT.fetch_add(1, Ordering::SeqCst);
         Ok(CountingLinearized {
             slope: 3.0,
@@ -157,8 +143,14 @@ fn checkpoint_policy_controls_retain_vs_replay() -> tidu::AdResult<()> {
     REPLAY_VJP_COUNT.store(0, Ordering::SeqCst);
 
     assert_eq!(run_with_policy(CheapReplay, CheckpointMode::Off)?, 1.0);
-    assert_eq!(run_with_policy(CheapReplay, CheckpointMode::Conservative)?, 1.0);
-    assert_eq!(run_with_policy(CheapReplay, CheckpointMode::Aggressive)?, 1.0);
+    assert_eq!(
+        run_with_policy(CheapReplay, CheckpointMode::Conservative)?,
+        1.0
+    );
+    assert_eq!(
+        run_with_policy(CheapReplay, CheckpointMode::Aggressive)?,
+        1.0
+    );
 
     assert_eq!(run_with_policy(ExpensiveReplay, CheckpointMode::Off)?, 2.0);
     assert_eq!(
@@ -171,8 +163,14 @@ fn checkpoint_policy_controls_retain_vs_replay() -> tidu::AdResult<()> {
     );
 
     assert_eq!(run_with_policy(MustRetain, CheckpointMode::Off)?, 3.0);
-    assert_eq!(run_with_policy(MustRetain, CheckpointMode::Conservative)?, 3.0);
-    assert_eq!(run_with_policy(MustRetain, CheckpointMode::Aggressive)?, 3.0);
+    assert_eq!(
+        run_with_policy(MustRetain, CheckpointMode::Conservative)?,
+        3.0
+    );
+    assert_eq!(
+        run_with_policy(MustRetain, CheckpointMode::Aggressive)?,
+        3.0
+    );
 
     assert_eq!(RETAIN_LINEARIZE_COUNT.load(Ordering::SeqCst), 6);
     assert_eq!(REPLAY_LINEARIZE_COUNT.load(Ordering::SeqCst), 3);

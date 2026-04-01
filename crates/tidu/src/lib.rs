@@ -1,20 +1,20 @@
-//! Tape-based reverse-mode and dual-number forward-mode AD engine.
+//! Torch-like public autograd API with a generic linearize-first core.
 //!
-//! `tidu` provides the execution runtime for `chainrules_core` traits. It is
-//! generic over the differentiable value type, so the same tape can power
-//! scalar examples, tensor engines, or downstream custom value types.
+//! `tidu` provides a value-centered public API for reverse-mode AD built around
+//! a first-order `linearize` step. The engine stays generic over the
+//! differentiable value type, so the same runtime can power scalar examples,
+//! tensor engines, or downstream custom value types.
 //!
-//! ## How it works
-//!
-//! Unlike eager-mode AD frameworks (e.g. PyTorch autograd), `tidu` is a
-//! **low-level AD engine**: you compute forward values yourself and register
-//! reverse rules on the tape. The tape then runs reverse-mode pullback to
-//! accumulate gradients. This design keeps the engine generic — the same tape
-//! works for scalars, tensors, or any custom type that implements
-//! [`Differentiable`].
+//! The normal public surface is:
+//! - [`Value`] for reverse-mode leaves and outputs,
+//! - [`LinearizableOp`] for custom high-level operations,
+//! - [`LinearizedOp`] for local `jvp`/`vjp` access,
+//! - [`CheckpointMode`], [`AdExecutionPolicy`], and [`with_ad_policy`] for
+//!   checkpoint policy scopes,
+//! - [`CheckpointHint`] for advanced retain-vs-replay hints on custom ops.
 //!
 //! **Companion crate:** The doc examples below import scalar rule helpers
-//! (e.g. `powf_rrule`, `powf_frule`) from the
+//! (e.g. `powf_rrule`) from the
 //! [`chainrules`](https://github.com/tensor4all/chainrules-rs) crate.
 //! Add it alongside `tidu` in your `Cargo.toml`:
 //!
@@ -25,300 +25,175 @@
 //! ```
 //!
 //! ## Table of Contents
-//! - [Scalar Reverse Mode](#scalar-reverse-mode)
-//! - [Checkpointed Reverse Mode](#checkpointed-reverse-mode)
-//! - [Scalar Forward Mode](#scalar-forward-mode)
-//! - [Scalar Hessian-Vector Product](#scalar-hessian-vector-product)
+//! - [Value-Centered Reverse Mode](#value-centered-reverse-mode)
+//! - [Local Directional Derivatives](#local-directional-derivatives)
+//! - [Checkpoint Policy](#checkpoint-policy)
 //! - [Custom Value Type](#custom-value-type)
 //!
-//! ## Scalar Reverse Mode
+//! ## Value-Centered Reverse Mode
 //! ```rust
-//! use chainrules::powf_rrule;
-//! use tidu::{AdResult, NodeId, ReverseRule, Tape};
+//! use tidu::{LinearizableOp, LinearizedOp, Schema, SlotSchema, Value};
 //!
-//! // Define a reverse rule for f(x) = x^exponent.
-//! // The rule stores the values it needs for the backward pass.
-//! struct PowfRule {
-//!     input: NodeId,
-//!     x: f64,
-//!     exponent: f64,
-//! }
+//! #[derive(Clone, Copy)]
+//! struct Cube;
 //!
-//! impl ReverseRule<f64> for PowfRule {
-//!     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
-//!         Ok(vec![(self.input, powf_rrule(self.x, self.exponent, *cotangent))])
-//!     }
-//!
-//!     fn inputs(&self) -> Vec<NodeId> {
-//!         vec![self.input]
-//!     }
-//! }
-//!
-//! // Create a tape and register x = 2.0 as a leaf (input requiring gradient).
-//! let tape = Tape::<f64>::new();
-//! let x = tape.leaf(2.0);
-//!
-//! // Record y = x^3 = 8.0 with its reverse rule.
-//! // The first argument is the pre-computed forward value.
-//! // The third argument is an optional output tangent (only needed for HVP).
-//! let y = tape.record_op(
-//!     8.0, // forward value: 2.0^3.0
-//!     Box::new(PowfRule {
-//!         input: x.node_id().unwrap(),
-//!         x: 2.0,
-//!         exponent: 3.0,
-//!     }),
-//!     None, // no output tangent (only needed for HVP)
-//! );
-//!
-//! // Run reverse-mode pullback: dy/dx = 3 * 2^2 = 12.
-//! let grads = tape.pullback(&y).unwrap();
-//! assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 12.0);
-//! ```
-//!
-//! ## Checkpointed Reverse Mode
-//!
-//! [`Tape::record_op`] retains the materialized reverse rule on the tape.
-//! [`Tape::record_checkpointed_op`] stores a lightweight [`CheckpointRecipe`]
-//! instead and replays the reverse rule when pullback or HVP reaches that
-//! node.
-//!
-//! ```rust
-//! use tidu::{AdResult, CheckpointRecipe, NodeId, ReplayResult, ReverseRule, Tape};
-//!
-//! struct SquareRule {
-//!     input: NodeId,
+//! struct CubeLinearized {
 //!     x: f64,
 //! }
 //!
-//! impl ReverseRule<f64> for SquareRule {
-//!     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
-//!         Ok(vec![(self.input, 2.0 * self.x * *cotangent)])
+//! impl LinearizedOp<f64> for CubeLinearized {
+//!     fn jvp(&self, input_tangents: &[Option<f64>]) -> tidu::AdResult<Vec<Option<f64>>> {
+//!         Ok(vec![input_tangents[0].map(|dx| 3.0 * self.x * self.x * dx)])
 //!     }
 //!
-//!     fn inputs(&self) -> Vec<NodeId> {
-//!         vec![self.input]
+//!     fn vjp(
+//!         &self,
+//!         output_cotangents: &[Option<f64>],
+//!         input_grad_mask: &[bool],
+//!     ) -> tidu::AdResult<Vec<Option<f64>>> {
+//!         assert_eq!(input_grad_mask, &[true]);
+//!         let grad_out = output_cotangents[0].unwrap_or(0.0);
+//!         Ok(vec![Some(3.0 * self.x * self.x * grad_out)])
 //!     }
 //! }
 //!
-//! struct SquareRecipe {
-//!     input: NodeId,
-//! }
+//! impl LinearizableOp<f64> for Cube {
+//!     type Linearized = CubeLinearized;
 //!
-//! impl CheckpointRecipe<f64> for SquareRecipe {
-//!     fn inputs(&self) -> Vec<NodeId> {
-//!         vec![self.input]
+//!     fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
+//!         Ok(vec![*inputs[0] * *inputs[0] * *inputs[0]])
 //!     }
 //!
-//!     fn replay(&self, inputs: &[&f64]) -> AdResult<ReplayResult<f64>> {
-//!         let x = *inputs[0];
-//!         Ok(ReplayResult {
-//!             output_primal: x * x,
-//!             rule: Box::new(SquareRule {
-//!                 input: self.input,
-//!                 x,
-//!             }),
+//!     fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
+//!         Ok(Schema {
+//!             slots: vec![SlotSchema {
+//!                 differentiable: true,
+//!                 auxiliary: false,
+//!             }],
 //!         })
 //!     }
+//!
+//!     fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
+//!         Ok(Schema {
+//!             slots: vec![SlotSchema {
+//!                 differentiable: true,
+//!                 auxiliary: false,
+//!             }],
+//!         })
+//!     }
+//!
+//!     fn linearize(
+//!         &self,
+//!         inputs: &[&f64],
+//!         _outputs: &[f64],
+//!     ) -> tidu::AdResult<Self::Linearized> {
+//!         Ok(CubeLinearized { x: *inputs[0] })
+//!     }
 //! }
 //!
-//! let tape = Tape::<f64>::new();
-//! let x = tape.leaf(3.0);
-//! let y = tape.record_checkpointed_op(
-//!     9.0,
-//!     Box::new(SquareRecipe {
-//!         input: x.node_id().unwrap(),
-//!     }),
-//!     None,
-//! );
-//! let grads = tape.pullback(&y).unwrap();
-//! assert_eq!(*grads.get(x.node_id().unwrap()).unwrap(), 6.0);
+//! let x = Value::new(2.0).with_requires_grad(true);
+//! let y = Cube.apply_one(&[&x]).unwrap();
+//! y.backward().unwrap();
+//! assert_eq!(x.grad().unwrap().unwrap(), 12.0);
 //! ```
 //!
-//! Attached `TrackedValue` handles reuse retained primals from the tape when
-//! possible, so retained ops do not need `V: Clone` just to preserve a second
-//! copy for replay.
-//!
-//! ## Scalar Forward Mode
-//!
-//! Forward mode propagates tangents (directional derivatives) alongside
-//! the primal computation. Use [`DualValue`] to pair a value with its
-//! tangent, then pass them through `_frule` helpers from `chainrules`.
+//! ## Local Directional Derivatives
 //!
 //! ```rust
-//! use chainrules::powf_frule;
-//! use tidu::DualValue;
+//! use tidu::{LinearizableOp, LinearizedOp, Schema, SlotSchema};
 //!
-//! // Create x = 2.0 with tangent dx = 1.0 (i.e. d/dx).
-//! let x = DualValue::with_tangent(2.0_f64, 1.0_f64).unwrap();
+//! #[derive(Clone, Copy)]
+//! struct Square;
 //!
-//! // Compute y = x^3 and its derivative dy = 3*x^2*dx = 12.0.
-//! let (y, dy) = powf_frule(*x.primal(), 3.0, *x.tangent().unwrap());
-//! assert_eq!(y, 8.0);
-//! assert_eq!(dy, 12.0);
-//! ```
-//!
-//! ## Scalar Hessian-Vector Product
-//!
-//! A Hessian-vector product (HVP) computes **H*v** -- the product of the
-//! Hessian of a scalar function with a tangent direction **v** -- without
-//! materialising the full Hessian matrix. `tidu` achieves this via
-//! forward-over-reverse mode.
-//!
-//! To enable HVP, implement [`ReverseRule::forward_tangents`] and
-//! [`ReverseRule::pullback_with_tangents`] on your rule. The default
-//! implementations return `Err(HvpNotSupported)`, so they are only
-//! required when you need second-order derivatives.
-//!
-//! Tangent directions are passed as a `HashMap<NodeId, V::Tangent>` to
-//! [`Tape::hvp`] rather than being stored on leaves or rules.
-//!
-//! ```rust
-//! use std::collections::HashMap;
-//! use tidu::{AdResult, HvpResult, NodeId, ReverseRule, Tape};
-//!
-//! struct SquareRuleHvp {
-//!     input: NodeId,
+//! struct SquareLinearized {
 //!     x: f64,
 //! }
 //!
-//! impl ReverseRule<f64> for SquareRuleHvp {
-//!     fn pullback(&self, cotangent: &f64) -> AdResult<Vec<(NodeId, f64)>> {
-//!         Ok(vec![(self.input, 2.0 * self.x * *cotangent)])
+//! impl LinearizedOp<f64> for SquareLinearized {
+//!     fn jvp(&self, input_tangents: &[Option<f64>]) -> tidu::AdResult<Vec<Option<f64>>> {
+//!         Ok(vec![input_tangents[0].map(|dx| 2.0 * self.x * dx)])
 //!     }
 //!
-//!     fn inputs(&self) -> Vec<NodeId> {
-//!         vec![self.input]
-//!     }
-//!
-//!     // Forward tangent propagation: d(x^2) = 2*x*dx.
-//!     fn forward_tangents<'t>(
+//!     fn vjp(
 //!         &self,
-//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
-//!     ) -> AdResult<Option<f64>>
-//!     where
-//!         f64: 't,
-//!     {
-//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
-//!         Ok(Some(2.0 * self.x * dx))
-//!     }
-//!
-//!     // Forward-over-reverse: differentiates the pullback itself.
-//!     // `input_tangents` provides the forward tangent for each input node.
-//!     fn pullback_with_tangents<'t>(
-//!         &self,
-//!         cotangent: &f64,
-//!         cotangent_tangent: &f64,
-//!         input_tangents: &dyn Fn(NodeId) -> Option<&'t f64>,
-//!     ) -> AdResult<Vec<(NodeId, f64, f64)>>
-//!     where
-//!         f64: 't,
-//!     {
-//!         let dx = input_tangents(self.input).copied().unwrap_or(0.0);
-//!         Ok(vec![(
-//!             self.input,
-//!             2.0 * self.x * *cotangent,
-//!             2.0 * dx * *cotangent + 2.0 * self.x * *cotangent_tangent,
-//!         )])
+//!         output_cotangents: &[Option<f64>],
+//!         input_grad_mask: &[bool],
+//!     ) -> tidu::AdResult<Vec<Option<f64>>> {
+//!         assert_eq!(input_grad_mask, &[true]);
+//!         let grad_out = output_cotangents[0].unwrap_or(0.0);
+//!         Ok(vec![Some(2.0 * self.x * grad_out)])
 //!     }
 //! }
 //!
-//! let tape = Tape::<f64>::new();
-//! let x = tape.leaf(3.0);
-//! let y = tape.record_op(
-//!     9.0, // forward value: 3.0^2
-//!     Box::new(SquareRuleHvp {
-//!         input: x.node_id().unwrap(),
-//!         x: 3.0,
-//!     }),
-//!     None,
-//! );
-//! // Pass tangent direction v = 1.0 via HashMap.
-//! let mut leaf_tangents = HashMap::new();
-//! leaf_tangents.insert(x.node_id().unwrap(), 1.0);
-//! let result: HvpResult<f64> = tape.hvp(&y, &leaf_tangents).unwrap();
-//! // Gradient: d(x^2)/dx at x=3 = 6.0
-//! assert_eq!(*result.gradients.get(x.node_id().unwrap()).unwrap(), 6.0);
-//! // HVP: H*v = d^2(x^2)/dx^2 * 1.0 = 2.0
-//! assert_eq!(*result.hvp.get(x.node_id().unwrap()).unwrap(), 2.0);
+//! impl LinearizableOp<f64> for Square {
+//!     type Linearized = SquareLinearized;
+//!
+//!     fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
+//!         Ok(vec![*inputs[0] * *inputs[0]])
+//!     }
+//!
+//!     fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
+//!         Ok(Schema {
+//!             slots: vec![SlotSchema {
+//!                 differentiable: true,
+//!                 auxiliary: false,
+//!             }],
+//!         })
+//!     }
+//!
+//!     fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
+//!         Ok(Schema {
+//!             slots: vec![SlotSchema {
+//!                 differentiable: true,
+//!                 auxiliary: false,
+//!             }],
+//!         })
+//!     }
+//!
+//!     fn linearize(
+//!         &self,
+//!         inputs: &[&f64],
+//!         _outputs: &[f64],
+//!     ) -> tidu::AdResult<Self::Linearized> {
+//!         Ok(SquareLinearized { x: *inputs[0] })
+//!     }
+//! }
+//!
+//! let lin = Square.linearize(&[&3.0], &[9.0]).unwrap();
+//! assert_eq!(lin.jvp(&[Some(1.0)]).unwrap(), vec![Some(6.0)]);
+//! ```
+//!
+//! ## Checkpoint Policy
+//!
+//! ```rust
+//! use tidu::{AdExecutionPolicy, CheckpointMode, with_ad_policy};
+//!
+//! let policy = AdExecutionPolicy {
+//!     checkpoint_mode: CheckpointMode::Conservative,
+//! };
+//!
+//! with_ad_policy(policy, || -> tidu::AdResult<()> {
+//!     // Record and differentiate values inside this scope.
+//!     Ok(())
+//! })
+//! .unwrap();
 //! ```
 //!
 //! ## Custom Value Type
 //!
-//! The tape is generic over any type implementing [`Differentiable`]. This
-//! example defines a simple `Vec2` and differentiates through it.
-//!
-//! **Note:** [`Tape::pullback`] requires a scalar loss (`num_elements() == 1`).
-//! For non-scalar outputs, use [`Tape::pullback_with_seed`] and supply an
-//! explicit cotangent seed.
-//!
-//! ```rust
-//! use tidu::{AdResult, Differentiable, NodeId, ReverseRule, Tape};
-//!
-//! #[derive(Clone, Copy, Debug, PartialEq)]
-//! struct Vec2([f64; 2]);
-//!
-//! impl Differentiable for Vec2 {
-//!     type Tangent = Self;
-//!
-//!     fn zero_tangent(&self) -> Self::Tangent {
-//!         Self([0.0, 0.0])
-//!     }
-//!
-//!     fn accumulate_tangent(a: Self::Tangent, b: &Self::Tangent) -> Self::Tangent {
-//!         Self([a.0[0] + b.0[0], a.0[1] + b.0[1]])
-//!     }
-//!
-//!     fn num_elements(&self) -> usize {
-//!         2
-//!     }
-//!
-//!     fn seed_cotangent(&self) -> Self::Tangent {
-//!         Self([1.0, 1.0])
-//!     }
-//! }
-//!
-//! struct ScaleByTwoRule {
-//!     input: NodeId,
-//! }
-//!
-//! impl ReverseRule<Vec2> for ScaleByTwoRule {
-//!     fn pullback(&self, cotangent: &Vec2) -> AdResult<Vec<(NodeId, Vec2)>> {
-//!         Ok(vec![(
-//!             self.input,
-//!             Vec2([2.0 * cotangent.0[0], 2.0 * cotangent.0[1]]),
-//!         )])
-//!     }
-//!
-//!     fn inputs(&self) -> Vec<NodeId> {
-//!         vec![self.input]
-//!     }
-//! }
-//!
-//! let tape = Tape::<Vec2>::new();
-//! let x = tape.leaf(Vec2([3.0, -1.0]));
-//! let y = tape.record_op(
-//!     Vec2([6.0, -2.0]),
-//!     Box::new(ScaleByTwoRule {
-//!         input: x.node_id().unwrap(),
-//!     }),
-//!     None, // no output tangent (only needed for HVP)
-//! );
-//! // Use pullback_with_seed because Vec2 is non-scalar (num_elements = 2).
-//! // pullback() would return Err(NonScalarLoss).
-//! let grads = tape.pullback_with_seed(&y, Vec2([1.0, -1.0])).unwrap();
-//! assert_eq!(
-//!     *grads.get(x.node_id().unwrap()).unwrap(),
-//!     Vec2([2.0, -2.0]),
-//! );
-//! ```
+//! `tidu` stays generic over any type implementing [`Differentiable`]. Custom
+//! values participate through the same [`Value`] and [`LinearizableOp`] surface,
+//! while reverse-mode seeding still happens through [`Value::backward`] or
+//! [`Value::backward_with_seed`] depending on the output shape.
 
-// Re-export all core traits so downstream can depend on just `tidu`.
-pub use chainrules_core::*;
+pub use chainrules_core::{AdResult, AutodiffError, Differentiable};
 
-mod engine;
+mod checkpoint;
+mod graph_task;
+mod linearized;
+mod reverse_graph;
+mod value;
 
-pub use engine::{
-    CheckpointRecipe, DualValue, Gradients, HvpResult, PullbackPlan, ReplayResult, Tape,
-    TrackedValue,
-};
+pub use checkpoint::{with_ad_policy, AdExecutionPolicy, CheckpointHint, CheckpointMode};
+pub use linearized::{LinearizableOp, LinearizedOp, Schema, SlotSchema};
+pub use value::Value;

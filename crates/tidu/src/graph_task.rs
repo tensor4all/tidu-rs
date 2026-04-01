@@ -253,3 +253,168 @@ impl<V: Differentiable> GraphTask<V> {
         Ok(self.query_grads)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::GraphTask;
+    use crate::linearized::LinearizedOp;
+    use crate::reverse_graph::{
+        leaf_handle, leaf_key, ReverseEdge, ReverseInput, ReverseNode, StoredNodeLinearization,
+    };
+    use crate::{AdResult, AutodiffError};
+
+    struct FixedLinearized {
+        grads: Vec<Option<f64>>,
+    }
+
+    impl LinearizedOp<f64> for FixedLinearized {
+        fn jvp(&self, _input_tangents: &[Option<f64>]) -> AdResult<Vec<Option<f64>>> {
+            Ok(vec![None; self.grads.len()])
+        }
+
+        fn vjp(
+            &self,
+            _output_cotangents: &[Option<f64>],
+            _input_grad_mask: &[bool],
+        ) -> AdResult<Vec<Option<f64>>> {
+            Ok(self.grads.clone())
+        }
+    }
+
+    fn retained_node(
+        parents: Vec<Option<ReverseInput<f64>>>,
+        output_count: usize,
+        input_grad_mask: Vec<bool>,
+        grads: Vec<Option<f64>>,
+    ) -> Arc<ReverseNode<f64>> {
+        Arc::new(ReverseNode::new(
+            parents,
+            output_count,
+            input_grad_mask,
+            StoredNodeLinearization::retained(FixedLinearized { grads }),
+        ))
+    }
+
+    #[test]
+    fn discover_deduplicates_shared_parent_nodes() {
+        let leaf = leaf_handle::<f64>();
+        let shared = retained_node(
+            vec![Some(ReverseInput::Leaf(leaf))],
+            1,
+            vec![true],
+            vec![Some(1.0)],
+        );
+        let root = ReverseEdge {
+            node: retained_node(
+                vec![
+                    Some(ReverseInput::Edge(ReverseEdge {
+                        node: shared.clone(),
+                        output_slot: 0,
+                    })),
+                    Some(ReverseInput::Edge(ReverseEdge {
+                        node: shared,
+                        output_slot: 0,
+                    })),
+                ],
+                1,
+                vec![true, true],
+                vec![Some(1.0), Some(1.0)],
+            ),
+            output_slot: 0,
+        };
+
+        let task = GraphTask::from_root(&root, 1.0).unwrap();
+        assert_eq!(task.nodes.len(), 2);
+    }
+
+    #[test]
+    fn register_queries_tracks_leaf_and_edge_targets_and_ignores_missing_ones() {
+        let leaf = leaf_handle::<f64>();
+        let root = ReverseEdge {
+            node: retained_node(
+                vec![Some(ReverseInput::Leaf(leaf.clone()))],
+                1,
+                vec![true],
+                vec![Some(1.0)],
+            ),
+            output_slot: 0,
+        };
+        let disconnected = ReverseEdge {
+            node: retained_node(
+                vec![Some(ReverseInput::Leaf(leaf_handle::<f64>()))],
+                1,
+                vec![true],
+                vec![Some(1.0)],
+            ),
+            output_slot: 0,
+        };
+
+        let mut task = GraphTask::from_root(&root, 1.0).unwrap();
+        task.register_queries(&[
+            Some(ReverseInput::Leaf(leaf.clone())),
+            Some(ReverseInput::Edge(root.clone())),
+            Some(ReverseInput::Edge(disconnected)),
+            None,
+        ]);
+
+        assert_eq!(task.query_grads, vec![None, None, None, None]);
+        assert_eq!(task.leaf_queries.get(&leaf_key(&leaf)), Some(&vec![0]));
+        assert_eq!(task.edge_queries.get(&(0, 0)), Some(&vec![1]));
+        assert!(!task.edge_queries.values().any(|slots| slots.contains(&2)));
+    }
+
+    #[test]
+    fn accumulate_slot_validates_indices_accumulates_queries_and_rejects_extra_cotangents() {
+        let root = ReverseEdge {
+            node: retained_node(vec![None], 1, vec![false], vec![None]),
+            output_slot: 0,
+        };
+        let mut task = GraphTask::from_root(&root, 1.0).unwrap();
+
+        assert!(matches!(
+            task.accumulate_slot(99, 0, 1.0),
+            Err(AutodiffError::MissingNode)
+        ));
+        assert!(matches!(
+            task.accumulate_slot(0, 99, 1.0),
+            Err(AutodiffError::InvalidArgument(_))
+        ));
+
+        task.ready.clear();
+        task.nodes[0].enqueued = false;
+        task.nodes[0].grad_outputs[0] = Some(0.5);
+        task.nodes[0].remaining_contributions[0] = 1;
+        task.nodes[0].pending_output_slots = 1;
+        task.query_grads = vec![Some(1.0), None];
+        task.edge_queries.insert((0, 0), vec![0, 1]);
+
+        task.accumulate_slot(0, 0, 1.0).unwrap();
+        assert_eq!(task.query_grads, vec![Some(2.0), Some(1.0)]);
+        assert_eq!(task.nodes[0].grad_outputs[0], Some(1.5));
+        assert_eq!(task.ready.pop_front(), Some(0));
+
+        assert!(matches!(
+            task.accumulate_slot(0, 0, 1.0),
+            Err(AutodiffError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn run_rejects_linearized_vjp_arity_mismatches() {
+        let root = ReverseEdge {
+            node: retained_node(vec![], 1, vec![], vec![Some(1.0)]),
+            output_slot: 0,
+        };
+
+        let err = GraphTask::from_root(&root, 1.0)
+            .unwrap()
+            .run(false)
+            .unwrap_err();
+        assert!(matches!(err, AutodiffError::InvalidArgument(_)));
+        assert!(err
+            .to_string()
+            .contains("linearized vjp returned 1 gradients for 0 inputs"));
+    }
+}

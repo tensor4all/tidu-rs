@@ -1,15 +1,12 @@
 mod common;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::{ScalarKey, ScalarOp};
-use computegraph::compile::compile;
+use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
-use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, OpMode, ValRef};
-use tidu::{differentiate, transpose, LinearFragment};
+use tidu::{differentiate, transpose};
 
 const TOL: f64 = 1e-10;
 
@@ -26,40 +23,6 @@ fn assert_approx_eq(actual: f64, expected: f64) {
         (actual - expected).abs() <= TOL,
         "expected {expected}, got {actual}"
     );
-}
-
-fn evaluate(
-    roots: Vec<Arc<Fragment<ScalarOp>>>,
-    outputs: &[GlobalValKey<ScalarOp>],
-    bindings: &[(GlobalValKey<ScalarOp>, f64)],
-) -> Vec<f64> {
-    let view = resolve(roots);
-    let graph = materialize_merge(&view, outputs);
-    let binding_map: HashMap<_, _> = bindings.iter().cloned().collect();
-    let ordered_inputs: Vec<f64> = graph
-        .inputs
-        .iter()
-        .map(|key| {
-            *binding_map
-                .get(key)
-                .unwrap_or_else(|| panic!("missing value for input key {:?}", key))
-        })
-        .collect();
-    let ordered_refs: Vec<&f64> = ordered_inputs.iter().collect();
-    let program = compile(&graph);
-    program.eval(&mut (), &ordered_refs)
-}
-
-fn tangent_input_key(linear: &LinearFragment<ScalarOp>, index: usize) -> GlobalValKey<ScalarOp> {
-    let local_id = linear.tangent_inputs[index].1;
-    linear.fragment.vals()[local_id].key.clone()
-}
-
-fn tangent_output_key(
-    linear: &LinearFragment<ScalarOp>,
-    index: usize,
-) -> Option<GlobalValKey<ScalarOp>> {
-    linear.tangent_outputs[index].map(|local_id| linear.fragment.vals()[local_id].key.clone())
 }
 
 fn build_x_plus_x() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {

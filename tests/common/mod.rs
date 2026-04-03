@@ -1,8 +1,17 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use chainrules::{ADKey, DiffPassId, PrimitiveOp};
+use computegraph::compile::compile;
+use computegraph::fragment::Fragment;
 use computegraph::fragment::FragmentBuilder;
+use computegraph::materialize::materialize_merge;
+use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::GraphOp;
+use tidu::LinearFragment;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ScalarKey {
     User(String),
@@ -213,4 +222,49 @@ impl PrimitiveOp for ScalarOp {
             }
         }
     }
+}
+
+pub fn evaluate<Op>(
+    roots: Vec<Arc<Fragment<Op>>>,
+    outputs: &[GlobalValKey<Op>],
+    bindings: &[(GlobalValKey<Op>, Op::Operand)],
+) -> Vec<Op::Operand>
+where
+    Op: PrimitiveOp,
+    Op::Context: Default,
+    Op::InputKey: ADKey,
+{
+    let view = resolve(roots);
+    let graph = materialize_merge(&view, outputs);
+    let binding_map: HashMap<_, _> = bindings.iter().cloned().collect();
+    let ordered_inputs: Vec<Op::Operand> = graph
+        .inputs
+        .iter()
+        .map(|key| {
+            binding_map
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| panic!("missing value for input key {:?}", key))
+        })
+        .collect();
+    let ordered_refs: Vec<&Op::Operand> = ordered_inputs.iter().collect();
+    let program = compile(&graph);
+    program.eval(&mut Default::default(), &ordered_refs)
+}
+
+pub fn tangent_input_key<Op>(linear: &LinearFragment<Op>, index: usize) -> GlobalValKey<Op>
+where
+    Op: PrimitiveOp,
+    Op::InputKey: ADKey,
+{
+    let local_id = linear.tangent_inputs[index].1;
+    linear.fragment.vals()[local_id].key.clone()
+}
+
+pub fn tangent_output_key<Op>(linear: &LinearFragment<Op>, index: usize) -> Option<GlobalValKey<Op>>
+where
+    Op: PrimitiveOp,
+    Op::InputKey: ADKey,
+{
+    linear.tangent_outputs[index].map(|local_id| linear.fragment.vals()[local_id].key.clone())
 }

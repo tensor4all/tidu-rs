@@ -8,7 +8,7 @@ use computegraph::fragment::FragmentBuilder;
 use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::GraphOp;
+use computegraph::{EvalGraphOp, GraphOp};
 use tidu::LinearFragment;
 
 #[allow(dead_code)]
@@ -54,7 +54,9 @@ impl GraphOp for ScalarOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for ScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             ScalarOp::Add => vec![inputs[0] + inputs[1]],
@@ -230,7 +232,7 @@ pub fn evaluate<Op>(
     bindings: &[(GlobalValKey<Op>, Op::Operand)],
 ) -> Vec<Op::Operand>
 where
-    Op: PrimitiveOp,
+    Op: PrimitiveOp + EvalGraphOp,
     Op::Context: Default,
     Op::InputKey: ADKey,
 {

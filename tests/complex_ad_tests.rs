@@ -7,7 +7,7 @@ use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{GraphOp, Operand};
+use computegraph::{EvalGraphOp, GraphOp};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
 
@@ -35,46 +35,18 @@ impl ADKey for ComplexScalarKey {
 #[derive(Clone, Debug, PartialEq)]
 struct C64(Complex64);
 
-impl Operand for C64 {
-    fn zero(_shape: &[usize]) -> Self {
+impl C64 {
+    #[allow(dead_code)]
+    fn zero() -> Self {
         Self(Complex64::new(0.0, 0.0))
     }
 
-    fn one(_shape: &[usize]) -> Self {
+    #[allow(dead_code)]
+    fn one() -> Self {
         Self(Complex64::new(1.0, 0.0))
     }
 
-    fn reshape(&self, _shape: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn broadcast_in_dim(&self, _shape: &[usize], _dims: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn add(&self, other: &Self) -> Self {
-        Self(self.0 + other.0)
-    }
-
-    fn multiply(&self, other: &Self) -> Self {
-        Self(self.0 * other.0)
-    }
-
-    fn reduce_sum(&self, _axes: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn dot_general(
-        &self,
-        other: &Self,
-        _lhs_contracting: &[usize],
-        _rhs_contracting: &[usize],
-        _lhs_batch: &[usize],
-        _rhs_batch: &[usize],
-    ) -> Self {
-        Self(self.0 * other.0)
-    }
-
+    #[allow(dead_code)]
     fn conj(&self) -> Self {
         Self(self.0.conj())
     }
@@ -105,7 +77,9 @@ impl GraphOp for ComplexScalarOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for ComplexScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&C64]) -> Vec<C64> {
         match self {
             ComplexScalarOp::Add => vec![C64(inputs[0].0 + inputs[1].0)],

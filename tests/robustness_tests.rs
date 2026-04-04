@@ -7,8 +7,8 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{GraphOp, Operand};
-use ndarray::{ArrayD, Axis, IxDyn};
+use computegraph::{EvalGraphOp, GraphOp};
+use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
 
@@ -139,50 +139,7 @@ impl ADKey for ComplexScalarKey {
 #[derive(Clone, Debug, PartialEq)]
 struct C64(Complex64);
 
-impl Operand for C64 {
-    fn zero(_shape: &[usize]) -> Self {
-        Self(Complex64::new(0.0, 0.0))
-    }
-
-    fn one(_shape: &[usize]) -> Self {
-        Self(Complex64::new(1.0, 0.0))
-    }
-
-    fn reshape(&self, _shape: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn broadcast_in_dim(&self, _shape: &[usize], _dims: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn add(&self, other: &Self) -> Self {
-        Self(self.0 + other.0)
-    }
-
-    fn multiply(&self, other: &Self) -> Self {
-        Self(self.0 * other.0)
-    }
-
-    fn reduce_sum(&self, _axes: &[usize]) -> Self {
-        self.clone()
-    }
-
-    fn dot_general(
-        &self,
-        other: &Self,
-        _lhs_contracting: &[usize],
-        _rhs_contracting: &[usize],
-        _lhs_batch: &[usize],
-        _rhs_batch: &[usize],
-    ) -> Self {
-        Self(self.0 * other.0)
-    }
-
-    fn conj(&self) -> Self {
-        Self(self.0.conj())
-    }
-}
+// C64 inherent methods (Operand trait removed from computegraph)
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ComplexScalarOp {
@@ -206,7 +163,9 @@ impl GraphOp for ComplexScalarOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for ComplexScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&C64]) -> Vec<C64> {
         match self {
             Self::Add => vec![C64(inputs[0].0 + inputs[1].0)],
@@ -458,81 +417,7 @@ impl ADKey for VectorKey {
 #[derive(Clone, Debug, PartialEq)]
 struct Tensor(ArrayD<f64>);
 
-impl Operand for Tensor {
-    fn zero(shape: &[usize]) -> Self {
-        Self(ArrayD::zeros(IxDyn(shape)))
-    }
-
-    fn one(shape: &[usize]) -> Self {
-        Self(ArrayD::from_elem(IxDyn(shape), 1.0))
-    }
-
-    fn reshape(&self, shape: &[usize]) -> Self {
-        Self(
-            self.0
-                .clone()
-                .into_shape_with_order(IxDyn(shape))
-                .unwrap_or_else(|err| panic!("reshape to {shape:?} failed: {err}")),
-        )
-    }
-
-    fn broadcast_in_dim(&self, shape: &[usize], dims: &[usize]) -> Self {
-        let src_shape = self.0.shape();
-        let mut reshape_shape = vec![1; shape.len()];
-
-        for (input_axis, &target_axis) in dims.iter().enumerate() {
-            reshape_shape[target_axis] = src_shape[input_axis];
-        }
-
-        let reshaped = self
-            .0
-            .clone()
-            .into_shape_with_order(IxDyn(&reshape_shape))
-            .unwrap_or_else(|err| {
-                panic!(
-                    "reshape before broadcast from {:?} to {:?} failed: {err}",
-                    src_shape, reshape_shape
-                )
-            });
-        let broadcast = reshaped
-            .broadcast(IxDyn(shape))
-            .unwrap_or_else(|| panic!("broadcast from {:?} to {:?} failed", reshape_shape, shape));
-        Self(broadcast.to_owned())
-    }
-
-    fn add(&self, other: &Self) -> Self {
-        Self(&self.0 + &other.0)
-    }
-
-    fn multiply(&self, other: &Self) -> Self {
-        Self(&self.0 * &other.0)
-    }
-
-    fn reduce_sum(&self, axes: &[usize]) -> Self {
-        let mut result = self.0.clone();
-        let mut sorted_axes = axes.to_vec();
-        sorted_axes.sort_unstable();
-        for &axis in sorted_axes.iter().rev() {
-            result = result.sum_axis(Axis(axis)).into_dyn();
-        }
-        Self(result)
-    }
-
-    fn dot_general(
-        &self,
-        other: &Self,
-        _lhs_contracting: &[usize],
-        _rhs_contracting: &[usize],
-        _lhs_batch: &[usize],
-        _rhs_batch: &[usize],
-    ) -> Self {
-        Self(&self.0 * &other.0)
-    }
-
-    fn conj(&self) -> Self {
-        self.clone()
-    }
-}
+// Tensor inherent methods (Operand trait removed from computegraph)
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum VectorOp {
@@ -552,7 +437,9 @@ impl GraphOp for VectorOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for VectorOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&Tensor]) -> Vec<Tensor> {
         match self {
             Self::Add => vec![Tensor(&inputs[0].0 + &inputs[1].0)],

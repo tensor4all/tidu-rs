@@ -7,7 +7,7 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{GraphOp, Operand};
+use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
@@ -66,7 +66,9 @@ impl GraphOp for ExtScalarOp {
             _ => 1,
         }
     }
+}
 
+impl EvalGraphOp for ExtScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             Self::Add => vec![inputs[0] + inputs[1]],
@@ -380,104 +382,7 @@ impl ADKey for VectorKey {
 #[derive(Clone, Debug, PartialEq)]
 struct Tensor(ArrayD<f64>);
 
-impl Operand for Tensor {
-    fn zero(shape: &[usize]) -> Self {
-        Self(ArrayD::zeros(IxDyn(shape)))
-    }
-
-    fn one(shape: &[usize]) -> Self {
-        Self(ArrayD::from_elem(IxDyn(shape), 1.0))
-    }
-
-    fn reshape(&self, shape: &[usize]) -> Self {
-        Self(
-            self.0
-                .clone()
-                .into_shape_with_order(IxDyn(shape))
-                .unwrap_or_else(|err| panic!("reshape to {shape:?} failed: {err}")),
-        )
-    }
-
-    fn broadcast_in_dim(&self, shape: &[usize], dims: &[usize]) -> Self {
-        let src_shape = self.0.shape();
-        assert_eq!(
-            dims.len(),
-            src_shape.len(),
-            "broadcast dims {dims:?} must match source rank {}",
-            src_shape.len()
-        );
-
-        let mut reshape_shape = vec![1; shape.len()];
-        for (input_axis, &target_axis) in dims.iter().enumerate() {
-            assert!(
-                target_axis < shape.len(),
-                "broadcast axis {target_axis} out of range for target rank {}",
-                shape.len()
-            );
-            reshape_shape[target_axis] = src_shape[input_axis];
-            assert_eq!(
-                shape[target_axis], src_shape[input_axis],
-                "target axis {target_axis} expected extent {}, got {}",
-                src_shape[input_axis], shape[target_axis]
-            );
-        }
-
-        let reshaped = self
-            .0
-            .clone()
-            .into_shape_with_order(IxDyn(&reshape_shape))
-            .unwrap_or_else(|err| {
-                panic!(
-                    "reshape before broadcast from {:?} to {:?} failed: {err}",
-                    src_shape, reshape_shape
-                )
-            });
-        let broadcast = reshaped
-            .broadcast(IxDyn(shape))
-            .unwrap_or_else(|| panic!("broadcast from {:?} to {:?} failed", reshape_shape, shape));
-        Self(broadcast.to_owned())
-    }
-
-    fn add(&self, other: &Self) -> Self {
-        Self(&self.0 + &other.0)
-    }
-
-    fn multiply(&self, other: &Self) -> Self {
-        Self(&self.0 * &other.0)
-    }
-
-    fn reduce_sum(&self, axes: &[usize]) -> Self {
-        let mut result = self.0.clone();
-        let mut sorted_axes = axes.to_vec();
-        sorted_axes.sort_unstable();
-        for &axis in sorted_axes.iter().rev() {
-            result = result.sum_axis(Axis(axis)).into_dyn();
-        }
-        Self(result)
-    }
-
-    fn dot_general(
-        &self,
-        other: &Self,
-        lhs_contracting: &[usize],
-        rhs_contracting: &[usize],
-        lhs_batch: &[usize],
-        rhs_batch: &[usize],
-    ) -> Self {
-        assert!(
-            lhs_contracting.is_empty()
-                && rhs_contracting.is_empty()
-                && lhs_batch.is_empty()
-                && rhs_batch.is_empty(),
-            "dot_general is only implemented for elementwise multiply in these tests"
-        );
-        Self(&self.0 * &other.0)
-    }
-
-    fn conj(&self) -> Self {
-        self.clone()
-    }
-}
+// Tensor inherent methods (previously from Operand trait, now removed from computegraph)
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum VectorOp {
@@ -501,7 +406,9 @@ impl GraphOp for VectorOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for VectorOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&Tensor]) -> Vec<Tensor> {
         match self {
             Self::Add => vec![Tensor(&inputs[0].0 + &inputs[1].0)],
@@ -730,24 +637,7 @@ impl ADKey for ComplexVectorKey {
 #[derive(Clone, Debug, PartialEq)]
 struct CTensor(ArrayD<Complex64>);
 
-impl Operand for CTensor {
-    fn zero(shape: &[usize]) -> Self {
-        Self(ArrayD::from_elem(IxDyn(shape), Complex64::new(0.0, 0.0)))
-    }
-
-    fn one(shape: &[usize]) -> Self {
-        Self(ArrayD::from_elem(IxDyn(shape), Complex64::new(1.0, 0.0)))
-    }
-
-    fn reshape(&self, shape: &[usize]) -> Self {
-        Self(
-            self.0
-                .clone()
-                .into_shape_with_order(IxDyn(shape))
-                .unwrap_or_else(|err| panic!("reshape to {shape:?} failed: {err}")),
-        )
-    }
-
+impl CTensor {
     fn broadcast_in_dim(&self, shape: &[usize], dims: &[usize]) -> Self {
         let src_shape = self.0.shape();
         assert_eq!(
@@ -788,14 +678,6 @@ impl Operand for CTensor {
         Self(broadcast.to_owned())
     }
 
-    fn add(&self, other: &Self) -> Self {
-        Self(&self.0 + &other.0)
-    }
-
-    fn multiply(&self, other: &Self) -> Self {
-        Self(&self.0 * &other.0)
-    }
-
     fn reduce_sum(&self, axes: &[usize]) -> Self {
         let mut result = self.0.clone();
         let mut sorted_axes = axes.to_vec();
@@ -804,28 +686,6 @@ impl Operand for CTensor {
             result = result.sum_axis(Axis(axis)).into_dyn();
         }
         Self(result)
-    }
-
-    fn dot_general(
-        &self,
-        other: &Self,
-        lhs_contracting: &[usize],
-        rhs_contracting: &[usize],
-        lhs_batch: &[usize],
-        rhs_batch: &[usize],
-    ) -> Self {
-        assert!(
-            lhs_contracting.is_empty()
-                && rhs_contracting.is_empty()
-                && lhs_batch.is_empty()
-                && rhs_batch.is_empty(),
-            "dot_general is only implemented for elementwise multiply in these tests"
-        );
-        Self(&self.0 * &other.0)
-    }
-
-    fn conj(&self) -> Self {
-        Self(self.0.mapv(|z| z.conj()))
     }
 }
 
@@ -866,7 +726,9 @@ impl GraphOp for ComplexVectorOp {
     fn n_outputs(&self) -> usize {
         1
     }
+}
 
+impl EvalGraphOp for ComplexVectorOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&CTensor]) -> Vec<CTensor> {
         match self {
             Self::Add => vec![CTensor(&inputs[0].0 + &inputs[1].0)],

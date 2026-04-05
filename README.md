@@ -1,196 +1,79 @@
 # tidu-rs
 
-`tidu-rs` is a general-purpose automatic-differentiation engine with a
-value-centered, linearize-first public API.
+AD graph transforms for the tensor4all v2 stack.
 
-It originated in the tensor4all stack, but it is designed to work with any
-downstream differentiable value type that implements the core AD traits from
-[`chainrules-rs`](https://github.com/tensor4all/chainrules-rs).
+Provides:
+- `differentiate` — JVP transform (resolved view → linear fragment)
+- `transpose` — reverse linear flow (linear fragment → linear fragment)
 
-The name **tidu** comes from the Chinese word **梯度**, written in pinyin as
-**tī dù**, meaning "gradient".
+Fully generic over `Op: PrimitiveOp`. References no specific primitives.
 
-## Getting Started
+## Complex number convention (JAX-compatible)
 
-Add `tidu` and its companion crate `chainrules` (which provides scalar
-differentiation rules such as `powf_rrule` and `sin_rrule`) to your
-`Cargo.toml`:
+Forward and reverse modes follow the JAX convention:
 
-```toml
-[dependencies]
-tidu       = { git = "https://github.com/tensor4all/tidu-rs" }
-chainrules = { git = "https://github.com/tensor4all/chainrules-rs" }
-```
+- **`differentiate` (JVP)** computes the full R-linear derivative:
+  `df = (∂f/∂z)·dz + (∂f/∂z̄)·conj(dz)`
+- **`transpose` (VJP)** computes the adjoint w.r.t. the real inner product
+  `⟨a, b⟩ = Re(conj(a)·b)`.
 
-`tidu` re-exports the core AD traits needed by the normal public surface,
-including `Differentiable`, `AdResult`, and `AutodiffError`. The intended
-public extension points are `Value`, `LinearizableOp`, `LinearizedOp`,
-`Schema`, `SlotSchema`, `CheckpointMode`, `AdExecutionPolicy`,
-`CheckpointHint`, and `with_ad_policy(...)`.
-
-## Quick Example
-
-Compute the gradient of `f(x) = x^3` at `x = 2` and inspect a local
-directional derivative from the same linearized object:
-
-```rust
-use tidu::{LinearizableOp, LinearizedOp, Schema, SlotSchema, Value};
-
-#[derive(Clone, Copy)]
-struct Cube;
-
-struct CubeLinearized {
-    x: f64,
-}
-
-impl LinearizedOp<f64> for CubeLinearized {
-    fn jvp(&self, input_tangents: &[Option<f64>]) -> tidu::AdResult<Vec<Option<f64>>> {
-        Ok(vec![input_tangents[0].map(|dx| 3.0 * self.x * self.x * dx)])
-    }
-
-    fn vjp(
-        &self,
-        output_cotangents: &[Option<f64>],
-        input_grad_mask: &[bool],
-    ) -> tidu::AdResult<Vec<Option<f64>>> {
-        assert_eq!(input_grad_mask, &[true]);
-        let g = output_cotangents[0].unwrap_or(0.0);
-        Ok(vec![Some(3.0 * self.x * self.x * g)])
-    }
-}
-
-impl LinearizableOp<f64> for Cube {
-    type Linearized = CubeLinearized;
-
-    fn primal(&self, inputs: &[&f64]) -> tidu::AdResult<Vec<f64>> {
-        Ok(vec![*inputs[0] * *inputs[0] * *inputs[0]])
-    }
-
-    fn input_schema(&self, _inputs: &[&f64]) -> tidu::AdResult<Schema> {
-        Ok(Schema {
-            slots: vec![SlotSchema {
-                differentiable: true,
-                auxiliary: false,
-            }],
-        })
-    }
-
-    fn output_schema(&self, _inputs: &[&f64], _outputs: &[f64]) -> tidu::AdResult<Schema> {
-        Ok(Schema {
-            slots: vec![SlotSchema {
-                differentiable: true,
-                auxiliary: false,
-            }],
-        })
-    }
-
-    fn linearize(
-        &self,
-        inputs: &[&f64],
-        _outputs: &[f64],
-    ) -> tidu::AdResult<Self::Linearized> {
-        Ok(CubeLinearized { x: *inputs[0] })
-    }
-}
-
-let x = Value::new(2.0).with_requires_grad(true);
-let y = Cube.apply_one(&[&x]).unwrap();
-y.backward().unwrap();
-assert_eq!(x.grad().unwrap().unwrap(), 12.0);
-
-let lin = Cube.linearize(&[x.primal()], &[*y.primal()]).unwrap();
-assert_eq!(lin.jvp(&[Some(1.0)]).unwrap(), vec![Some(12.0)]);
-```
-
-Checkpointing is controlled with a small public policy scope:
-
-```rust
-use tidu::{AdExecutionPolicy, CheckpointMode, with_ad_policy};
-
-let policy = AdExecutionPolicy {
-    checkpoint_mode: CheckpointMode::Conservative,
-};
-
-with_ad_policy(policy, || -> tidu::AdResult<()> {
-    // Record and differentiate values inside this scope.
-    Ok(())
-})
-.unwrap();
-```
-
-`CheckpointHint` is an advanced retain-vs-replay hint for custom ops. Most
-downstream code only needs `CheckpointMode`, `AdExecutionPolicy`, and
-`with_ad_policy(...)`.
-
-See the [crate-level rustdoc](https://tensor4all.org/tidu-rs/tidu/) for
-`Value`, `LinearizableOp`, `LinearizedOp`, and checkpoint policy examples.
-
-## Architecture
+For a general function f: C → C, the VJP cotangent relates to Wirtinger
+derivatives as:
 
 ```text
-┌─────────────────────────────────────────────────────┐
-│                      Value<V>                       │
-│  Public value handle for eager reverse-mode AD.     │
-│  Exposes with_requires_grad, backward, and grad().  │
-├─────────────────────────────────────────────────────┤
-│                LinearizableOp<V>                    │
-│  High-level custom op API: primal + linearize.      │
-│  The normal extension path for downstream users.    │
-├─────────────────────────────────────────────────────┤
-│                 LinearizedOp<V>                     │
-│  Shared first-order object exposing jvp + vjp.      │
-│  Retained or replayed internally by the runtime.    │
-├─────────────────────────────────────────────────────┤
-│      CheckpointMode / AdExecutionPolicy scope       │
-│  Small public policy surface over retain/replay.    │
-└─────────────────────────────────────────────────────┘
+ct_z = ct_y · conj(∂f/∂z) + conj(ct_y) · (∂f/∂z̄)
 ```
 
-## What Lives Here
+Special cases:
 
-- `tidu`: eager reverse mode with a linearize-first core
-- `Value`, `LinearizableOp`, and `LinearizedOp`
-- checkpoint policy scope via `CheckpointMode`, `AdExecutionPolicy`, and `with_ad_policy(...)`
-- retained or replayed linearizations kept internal to the runtime
+| Case | Result |
+|------|--------|
+| Real loss (L: C→R), ct_y=1 | `ct_z = 2·(∂L/∂z̄)` |
+| Holomorphic f, ∂f/∂z̄=0 | `ct_z = ct_y · conj(f'(z))` |
+| conj(z), ∂f/∂z=0 | `ct_z = conj(ct_y)` |
 
-## Layering
+For real-valued losses, this differs from PyTorch (which returns `∂L/∂z̄`
+directly) by a factor of 2. The steepest-descent direction is the same.
 
-`tidu-rs` depends on the engine-independent traits in
-[`chainrules-rs`](https://github.com/tensor4all/chainrules-rs), especially
-`chainrules-core`.
+## Higher-order AD
 
-That split is deliberate:
+Higher-order derivatives are computed by repeated application of
+`differentiate` (and optionally `transpose`). Each `differentiate` call
+consumes one tangent vector, so the output shape stays the same as the
+original function output regardless of derivative order.
 
-- `chainrules-rs` defines reusable traits and scalar rules
-- `tidu-rs` provides one concrete engine runtime
-- downstream tensor libraries can reuse the rules without depending on this
-  specific engine
+For f: R^n → R^m:
 
-## Design Goals
+| Order | Computation | New tangent | Output shape |
+|-------|-------------|-------------|-------------|
+| 0 | f(x) | — | R^m |
+| 1st (F) | J · dx₁ | dx₁ ∈ R^n | R^m |
+| 2nd (FoF) | (∂J/∂x · dx₂) · dx₁ | dx₂ ∈ R^n | R^m |
+| 3rd (FoFoF) | ∂³f/∂x³ · dx₁ · dx₂ · dx₃ | dx₃ ∈ R^n | R^m |
 
-- Keep the engine generic over downstream differentiable value types
-- Keep the normal public API torch-like and value-centered
-- Make future forward-on-reverse straightforward without exposing higher-order execution now
-- Prefer root-cause fixes, DRY abstractions, and small focused modules
+Each JVP contracts one tangent vector with the derivative tensor. The
+k-th forward derivative is a rank-(k+1) tensor contracted with k tangent
+vectors, producing a result in R^m.
 
-## Testing
+To extract individual tensor components, use unit basis vectors as tangents:
+`∂³f/∂xᵢ∂xⱼ∂xₖ = FoFoF(eᵢ, eⱼ, eₖ)`.
 
-```bash
-cargo test --workspace --release
-cargo doc --workspace --no-deps
+### Typical pipelines
+
+```text
+FoF:   build → resolve → differentiate → resolve → differentiate → materialize → compile → eval
+FoFoF: build → (resolve → differentiate) × 3 → materialize → compile → eval
+FoR:   build → resolve → differentiate → transpose → resolve → differentiate → materialize → compile → eval
 ```
 
-## Solve-Bug Entrypoints
+Each `differentiate` call requires a unique `DiffPassId` and a preceding
+`resolve` to make earlier fragments traceable.
 
-Use `bash ai/run-codex-solve-bug.sh` or `bash ai/run-claude-solve-bug.sh` when
-you want a headless agent to pick one actionable bug or bug-like issue, fix it,
-and drive the repository-local PR workflow.
+## Part of the tensor4all v2 stack
 
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](./LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](./LICENSE-MIT))
-
-at your option.
+```text
+computegraph-rs    graph engine
+chainrules-rs      PrimitiveOp trait
+tidu-rs        <-- this crate (differentiate, transpose)
+tenferro-rs        concrete primitives
+```

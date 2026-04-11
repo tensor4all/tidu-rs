@@ -68,6 +68,8 @@ impl EvalGraphOp for ScalarOp {
 }
 
 impl PrimitiveOp for ScalarOp {
+    type ADContext = ();
+
     fn add() -> Self {
         ScalarOp::Add
     }
@@ -78,6 +80,7 @@ impl PrimitiveOp for ScalarOp {
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
             ScalarOp::Add => match (tangent_in[0], tangent_in[1]) {
@@ -171,6 +174,7 @@ impl PrimitiveOp for ScalarOp {
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,

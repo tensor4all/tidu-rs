@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 computegraph = { git = "https://github.com/tensor4all/computegraph-rs.git", rev = "b361eac" }
-chainrules = { git = "https://github.com/tensor4all/chainrules-rs.git", rev = "ed7eeed" }
+chainrules = { git = "https://github.com/tensor4all/chainrules-rs.git", rev = "2f2a8cc" }
 
 [dev-dependencies]
 ndarray = "0.16"

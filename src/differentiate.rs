@@ -20,7 +20,8 @@ use crate::LinearFragment;
 /// use tidu::differentiate;
 ///
 /// let view = resolve(vec![primal_fragment]);
-/// let linear = differentiate(&view, &[output_key], &[input_key], 1);
+/// let mut ctx = ();
+/// let linear = differentiate(&view, &[output_key], &[input_key], 1, &mut ctx);
 /// assert_eq!(linear.tangent_outputs.len(), 1);
 /// ```
 pub fn differentiate<Op: PrimitiveOp>(
@@ -28,6 +29,7 @@ pub fn differentiate<Op: PrimitiveOp>(
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
+    ctx: &mut Op::ADContext,
 ) -> LinearFragment<Op>
 where
     Op::InputKey: ADKey,
@@ -87,7 +89,7 @@ where
                 }
 
                 let tangent_out =
-                    op.linearize(&mut builder, &input_keys, &output_keys, &tangent_in);
+                    op.linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx);
                 assert_eq!(
                     tangent_out.len(),
                     output_keys.len(),

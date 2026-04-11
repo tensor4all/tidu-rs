@@ -10,7 +10,8 @@ use computegraph::{GraphOp, LocalValId};
 /// use tidu::differentiate;
 ///
 /// let view = resolve(vec![primal_fragment]);
-/// let linear = differentiate(&view, &[output_key], &[input_key], 1);
+/// let mut ctx = ();
+/// let linear = differentiate(&view, &[output_key], &[input_key], 1, &mut ctx);
 /// assert_eq!(linear.tangent_inputs.len(), 1);
 /// ```
 pub struct LinearFragment<Op: GraphOp> {

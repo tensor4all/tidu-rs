@@ -14,10 +14,14 @@ use crate::LinearFragment;
 /// # Examples
 ///
 /// ```ignore
-/// let transposed = tidu::transpose(&linear_fragment);
+/// let mut ctx = ();
+/// let transposed = tidu::transpose(&linear_fragment, &mut ctx);
 /// assert_eq!(transposed.tangent_outputs.len(), linear_fragment.tangent_inputs.len());
 /// ```
-pub fn transpose<Op: PrimitiveOp>(linear: &LinearFragment<Op>) -> LinearFragment<Op>
+pub fn transpose<Op: PrimitiveOp>(
+    linear: &LinearFragment<Op>,
+    ctx: &mut Op::ADContext,
+) -> LinearFragment<Op>
 where
     Op::InputKey: ADKey,
 {
@@ -62,10 +66,13 @@ where
             })
             .collect();
 
-        let cotangent_in =
-            op_node
-                .op
-                .transpose_rule(&mut builder, &cotangent_out, &rule_inputs, &op_node.mode);
+        let cotangent_in = op_node.op.transpose_rule(
+            &mut builder,
+            &cotangent_out,
+            &rule_inputs,
+            &op_node.mode,
+            ctx,
+        );
         assert_eq!(
             cotangent_in.len(),
             rule_inputs.len(),

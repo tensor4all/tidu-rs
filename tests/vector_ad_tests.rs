@@ -140,6 +140,8 @@ impl EvalGraphOp for VectorOp {
 }
 
 impl PrimitiveOp for VectorOp {
+    type ADContext = ();
+
     fn add() -> Self {
         VectorOp::Add
     }
@@ -150,6 +152,7 @@ impl PrimitiveOp for VectorOp {
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
             VectorOp::Add => match (tangent_in[0], tangent_in[1]) {
@@ -275,6 +278,7 @@ impl PrimitiveOp for VectorOp {
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
@@ -479,6 +483,7 @@ fn jvp_elementwise_exp_ax() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         1,
+        &mut (),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -508,8 +513,9 @@ fn vjp_elementwise_exp_ax() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         2,
+        &mut (),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -538,6 +544,7 @@ fn jvp_sum_exp_ax() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         3,
+        &mut (),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -567,8 +574,9 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         4,
+        &mut (),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -597,8 +605,9 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         5,
+        &mut (),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");

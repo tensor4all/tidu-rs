@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 mod common;
 
 use std::sync::Arc;
@@ -433,6 +434,7 @@ fn jvp_conj_z() {
         &[ck("z")],
         1,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -455,6 +457,7 @@ fn vjp_conj_z() {
         &[ck("z")],
         2,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -478,6 +481,7 @@ fn jvp_z_times_w() {
         &[ck("z"), ck("w")],
         3,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -510,6 +514,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
         &[ck("z")],
         4,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -537,6 +542,7 @@ fn vjp_abs_squared_returns_two_z() {
         &[ck("z")],
         5,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -561,6 +567,7 @@ fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
         &[ck("z")],
         6,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
     let ct_y_key = tangent_input_key(&transposed, 0);

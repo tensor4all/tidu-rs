@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 mod common;
 
 use std::sync::Arc;
@@ -484,6 +485,7 @@ fn jvp_elementwise_exp_ax() {
         &[vk("x")],
         1,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -514,6 +516,7 @@ fn vjp_elementwise_exp_ax() {
         &[vk("x")],
         2,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -545,6 +548,7 @@ fn jvp_sum_exp_ax() {
         &[vk("x")],
         3,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -575,6 +579,7 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
         &[vk("x")],
         4,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -606,6 +611,7 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
         &[vk("x")],
         5,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 

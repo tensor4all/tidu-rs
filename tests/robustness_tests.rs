@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 mod common;
 
 use std::sync::Arc;
@@ -635,6 +636,7 @@ fn adjoint_consistency_exp_ax() {
         &[sk("x")],
         101,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
@@ -679,6 +681,7 @@ fn adjoint_consistency_x_plus_x_times_x() {
         &[sk("x")],
         102,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
@@ -715,6 +718,7 @@ fn adjoint_consistency_complex() {
         &[ck("z")],
         103,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
@@ -759,6 +763,7 @@ fn inactive_tangent_returns_none() {
         &[sk("x")],
         104,
         &mut (),
+        &HashMap::new(),
     );
 
     assert!(
@@ -780,6 +785,7 @@ fn diamond_pattern_shared_subexpression() {
         &[sk("x")],
         105,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
@@ -814,6 +820,7 @@ fn multi_variable_vjp() {
         &[sk("x"), sk("y")],
         106,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -843,6 +850,7 @@ fn ror_x_plus_x_times_x() {
         &[sk("x")],
         107,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
     let reverse_of_reverse = transpose(&transposed, &mut ());
@@ -872,6 +880,7 @@ fn for_complex_z_squared() {
         &[ck("z")],
         108,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -884,6 +893,7 @@ fn for_complex_z_squared() {
         &[ck("z")],
         109,
         &mut (),
+        &HashMap::new(),
     );
     let d_ct_z_key =
         tangent_output_key(&second_linear, 0).expect("active forward-over-reverse output");
@@ -915,6 +925,7 @@ fn jvp_identity() {
         &[sk("x")],
         110,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("identity should keep tangent active");
     let dx_key = tangent_input_key(&linear, 0);
@@ -948,6 +959,7 @@ fn vjp_constant_output() {
         &[sk("x")],
         111,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -974,6 +986,7 @@ fn fof_vector_x_squared() {
         &[vk("x")],
         112,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -985,6 +998,7 @@ fn fof_vector_x_squared() {
         &[vk("x")],
         113,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);

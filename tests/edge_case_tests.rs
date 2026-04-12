@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 mod common;
 
 use std::sync::Arc;
@@ -1146,6 +1147,7 @@ fn multi_output_sincos_jvp_sum_matches_expected() {
         &[sk("x")],
         1001,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -1170,6 +1172,7 @@ fn multi_output_sincos_vjp_matches_expected() {
         &[sk("x")],
         1002,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -1199,6 +1202,7 @@ fn multi_output_sincos_adjoint_consistency() {
         &[sk("x")],
         1003,
         &mut (),
+        &HashMap::new(),
     );
     let dy_sin_key = tangent_output_key(&linear, 0).expect("active tangent output for sin");
     let dy_cos_key = tangent_output_key(&linear, 1).expect("active tangent output for cos");
@@ -1249,6 +1253,7 @@ fn deep_chain_exp_10x() {
         &[sk("x")],
         1101,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
@@ -1306,6 +1311,7 @@ fn third_order_x_cubed() {
         &[sk("x")],
         1201,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1317,6 +1323,7 @@ fn third_order_x_cubed() {
         &[sk("x")],
         1202,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1332,6 +1339,7 @@ fn third_order_x_cubed() {
         &[sk("x")],
         1203,
         &mut (),
+        &HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1364,6 +1372,7 @@ fn fourth_order_x_fourth() {
         &[sk("x")],
         1211,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1375,6 +1384,7 @@ fn fourth_order_x_fourth() {
         &[sk("x")],
         1212,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1390,6 +1400,7 @@ fn fourth_order_x_fourth() {
         &[sk("x")],
         1213,
         &mut (),
+        &HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1406,6 +1417,7 @@ fn fourth_order_x_fourth() {
         &[sk("x")],
         1214,
         &mut (),
+        &HashMap::new(),
     );
     let d4y_key = tangent_output_key(&linear_4, 0).expect("active fourth-order tangent output");
     let dx4_key = tangent_input_key(&linear_4, 0);
@@ -1440,6 +1452,7 @@ fn third_order_for_then_f() {
         &[sk("x")],
         1221,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -1452,6 +1465,7 @@ fn third_order_for_then_f() {
         &[sk("x")],
         1222,
         &mut (),
+        &HashMap::new(),
     );
     let d_ct_x_key = tangent_output_key(&linear_2, 0).expect("active forward-over-reverse output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1467,6 +1481,7 @@ fn third_order_for_then_f() {
         &[sk("x")],
         1223,
         &mut (),
+        &HashMap::new(),
     );
     let d2_ct_x_key = tangent_output_key(&linear_3, 0).expect("active third-order output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1503,6 +1518,7 @@ fn fofof_vector_x_cubed() {
         &[vk("x")],
         1401,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1514,6 +1530,7 @@ fn fofof_vector_x_cubed() {
         &[vk("x")],
         1402,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1529,6 +1546,7 @@ fn fofof_vector_x_cubed() {
         &[vk("x")],
         1403,
         &mut (),
+        &HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1570,6 +1588,7 @@ fn fof_vector_adjoint_consistency() {
         &[vk("x")],
         1411,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_fof_key = tangent_input_key(&linear_1, 0);
@@ -1582,6 +1601,7 @@ fn fof_vector_adjoint_consistency() {
         &[vk("x")],
         1412,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1609,6 +1629,7 @@ fn fof_vector_adjoint_consistency() {
         &[vk("x")],
         1413,
         &mut (),
+        &HashMap::new(),
     );
     let d_ct_x_key = tangent_output_key(&linear_3, 0).expect("active forward-over-reverse output");
     let dx1_for_key = tangent_input_key(&linear_3, 0);
@@ -1637,6 +1658,7 @@ fn complex_vector_jvp_conj_elementwise() {
         &[cvk("z")],
         1301,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -1665,6 +1687,7 @@ fn complex_vector_vjp_sum_abs_squared() {
         &[cvk("z")],
         1302,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -1696,6 +1719,7 @@ fn complex_vector_adjoint_consistency() {
         &[cvk("z")],
         1303,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);

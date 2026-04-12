@@ -8,7 +8,7 @@ use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::GraphOp;
+use computegraph::{GraphOp, OpEmitter};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum CtxKey {
@@ -105,7 +105,7 @@ impl PrimitiveOp for CountingOp {
 
     fn transpose_rule(
         &self,
-        _builder: &mut FragmentBuilder<Self>,
+        _builder: &mut impl OpEmitter<Self>,
         cotangent_out: &[Option<LocalValId>],
         _inputs: &[ValRef<Self>],
         _mode: &OpMode,

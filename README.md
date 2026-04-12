@@ -8,6 +8,13 @@ Provides:
 
 Fully generic over `Op: PrimitiveOp`. References no specific primitives.
 
+## Eager AD
+
+tidu also provides eager reverse-mode AD via `GradNode` and
+`backward_dag()`. These types enable PyTorch-style backward through a
+distributed `grad_fn` DAG, reusing the same AD rules (`linearize` +
+`transpose_rule`) as graph-based AD.
+
 ## Complex number convention (JAX-compatible)
 
 Forward and reverse modes follow the JAX convention:

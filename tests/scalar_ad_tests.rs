@@ -123,6 +123,8 @@ fn jvp_x_plus_x() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         1,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -145,6 +147,8 @@ fn jvp_x_times_y() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         2,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -167,6 +171,8 @@ fn jvp_exp_ax() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         3,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -189,8 +195,10 @@ fn vjp_exp_ax() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         4,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -215,8 +223,10 @@ fn vjp_x_plus_x_times_x() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         5,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -237,6 +247,8 @@ fn fof_x_squared() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         6,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -247,6 +259,8 @@ fn fof_x_squared() {
         std::slice::from_ref(&dy_key),
         &[sk("x")],
         7,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -268,8 +282,10 @@ fn for_exp_ax() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         8,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_seed_key = tangent_input_key(&transposed, 0);
     let transposed_fragment = Arc::new(transposed.fragment);
@@ -279,6 +295,8 @@ fn for_exp_ax() {
         std::slice::from_ref(&ct_x_key),
         &[sk("x")],
         9,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d_ct_x_key =
         tangent_output_key(&second_linear, 0).expect("active forward-over-reverse output");
@@ -310,8 +328,10 @@ fn numerical_gradient_exp_ax() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         10,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");

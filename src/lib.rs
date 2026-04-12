@@ -8,11 +8,20 @@
 //!
 //! ```ignore
 //! use computegraph::resolve::resolve;
+//! use std::collections::HashMap;
 //! use tidu::{differentiate, transpose};
 //!
 //! let view = resolve(vec![primal_fragment]);
-//! let linear = differentiate(&view, &[output_key], &[input_key], 1);
-//! let _transposed = transpose(&linear);
+//! let mut ctx = ();
+//! let linear = differentiate(
+//!     &view,
+//!     &[output_key],
+//!     &[input_key],
+//!     1,
+//!     &mut ctx,
+//!     &HashMap::new(),
+//! );
+//! let _transposed = transpose(&linear, &mut ctx);
 //! ```
 
 mod differentiate;

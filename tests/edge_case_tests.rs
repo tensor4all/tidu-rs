@@ -80,6 +80,8 @@ impl EvalGraphOp for ExtScalarOp {
 }
 
 impl PrimitiveOp for ExtScalarOp {
+    type ADContext = ();
+
     fn add() -> Self {
         Self::Add
     }
@@ -90,6 +92,7 @@ impl PrimitiveOp for ExtScalarOp {
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
@@ -197,6 +200,7 @@ impl PrimitiveOp for ExtScalarOp {
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
@@ -419,6 +423,8 @@ impl EvalGraphOp for VectorOp {
 }
 
 impl PrimitiveOp for VectorOp {
+    type ADContext = ();
+
     fn add() -> Self {
         Self::Add
     }
@@ -429,6 +435,7 @@ impl PrimitiveOp for VectorOp {
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
@@ -509,6 +516,7 @@ impl PrimitiveOp for VectorOp {
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
@@ -745,6 +753,8 @@ impl EvalGraphOp for ComplexVectorOp {
 }
 
 impl PrimitiveOp for ComplexVectorOp {
+    type ADContext = ();
+
     fn add() -> Self {
         Self::Add
     }
@@ -755,6 +765,7 @@ impl PrimitiveOp for ComplexVectorOp {
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
@@ -893,6 +904,7 @@ impl PrimitiveOp for ComplexVectorOp {
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
+        _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
@@ -1133,6 +1145,8 @@ fn multi_output_sincos_jvp_sum_matches_expected() {
         std::slice::from_ref(&sum_key),
         &[sk("x")],
         1001,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -1156,8 +1170,10 @@ fn multi_output_sincos_vjp_matches_expected() {
         &[sin_key.clone(), cos_key.clone()],
         &[sk("x")],
         1002,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_sin_key = tangent_input_key(&transposed, 0);
     let ct_cos_key = tangent_input_key(&transposed, 1);
@@ -1184,11 +1200,13 @@ fn multi_output_sincos_adjoint_consistency() {
         &[sin_key.clone(), cos_key.clone()],
         &[sk("x")],
         1003,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_sin_key = tangent_output_key(&linear, 0).expect("active tangent output for sin");
     let dy_cos_key = tangent_output_key(&linear, 1).expect("active tangent output for cos");
     let dx_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
     let linear_fragment = Arc::new(linear.fragment);
 
     let x = 1.0;
@@ -1233,10 +1251,12 @@ fn deep_chain_exp_10x() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         1101,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
     let linear_fragment = Arc::new(linear.fragment);
 
     let ct_y_key = tangent_input_key(&transposed, 0);
@@ -1289,6 +1309,8 @@ fn third_order_x_cubed() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         1201,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1299,6 +1321,8 @@ fn third_order_x_cubed() {
         std::slice::from_ref(&dy_key),
         &[sk("x")],
         1202,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1313,6 +1337,8 @@ fn third_order_x_cubed() {
         std::slice::from_ref(&d2y_key),
         &[sk("x")],
         1203,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1344,6 +1370,8 @@ fn fourth_order_x_fourth() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         1211,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1354,6 +1382,8 @@ fn fourth_order_x_fourth() {
         std::slice::from_ref(&dy_key),
         &[sk("x")],
         1212,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1368,6 +1398,8 @@ fn fourth_order_x_fourth() {
         std::slice::from_ref(&d2y_key),
         &[sk("x")],
         1213,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1383,6 +1415,8 @@ fn fourth_order_x_fourth() {
         std::slice::from_ref(&d3y_key),
         &[sk("x")],
         1214,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d4y_key = tangent_output_key(&linear_4, 0).expect("active fourth-order tangent output");
     let dx4_key = tangent_input_key(&linear_4, 0);
@@ -1416,8 +1450,10 @@ fn third_order_for_then_f() {
         std::slice::from_ref(&y_key),
         &[sk("x")],
         1221,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_key = tangent_input_key(&transposed, 0);
     let transposed_fragment = Arc::new(transposed.fragment);
@@ -1427,6 +1463,8 @@ fn third_order_for_then_f() {
         std::slice::from_ref(&ct_x_key),
         &[sk("x")],
         1222,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d_ct_x_key = tangent_output_key(&linear_2, 0).expect("active forward-over-reverse output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1441,6 +1479,8 @@ fn third_order_for_then_f() {
         std::slice::from_ref(&d_ct_x_key),
         &[sk("x")],
         1223,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2_ct_x_key = tangent_output_key(&linear_3, 0).expect("active third-order output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1476,6 +1516,8 @@ fn fofof_vector_x_cubed() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         1401,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -1486,6 +1528,8 @@ fn fofof_vector_x_cubed() {
         std::slice::from_ref(&dy_key),
         &[vk("x")],
         1402,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1500,6 +1544,8 @@ fn fofof_vector_x_cubed() {
         std::slice::from_ref(&d2y_key),
         &[vk("x")],
         1403,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
@@ -1540,10 +1586,12 @@ fn fof_vector_adjoint_consistency() {
         std::slice::from_ref(&y_key),
         &[vk("x")],
         1411,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_fof_key = tangent_input_key(&linear_1, 0);
-    let transposed = transpose(&linear_1);
+    let transposed = transpose(&linear_1, &mut ());
     let linear_1_fragment = Arc::new(linear_1.fragment);
 
     let linear_2 = differentiate(
@@ -1551,6 +1599,8 @@ fn fof_vector_adjoint_consistency() {
         std::slice::from_ref(&dy_key),
         &[vk("x")],
         1412,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -1577,6 +1627,8 @@ fn fof_vector_adjoint_consistency() {
         std::slice::from_ref(&ct_x_key),
         &[vk("x")],
         1413,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let d_ct_x_key = tangent_output_key(&linear_3, 0).expect("active forward-over-reverse output");
     let dx1_for_key = tangent_input_key(&linear_3, 0);
@@ -1604,6 +1656,8 @@ fn complex_vector_jvp_conj_elementwise() {
         std::slice::from_ref(&y_key),
         &[cvk("z")],
         1301,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -1631,8 +1685,10 @@ fn complex_vector_vjp_sum_abs_squared() {
         std::slice::from_ref(&y_key),
         &[cvk("z")],
         1302,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -1661,10 +1717,12 @@ fn complex_vector_adjoint_consistency() {
         std::slice::from_ref(&y_key),
         &[cvk("z")],
         1303,
+        &mut (),
+        &std::collections::HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear);
+    let transposed = transpose(&linear, &mut ());
     let linear_fragment = Arc::new(linear.fragment);
 
     let z = cvector(&[Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0)]);

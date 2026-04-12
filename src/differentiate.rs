@@ -16,11 +16,21 @@ use crate::LinearFragment;
 /// # Examples
 ///
 /// ```ignore
+/// use std::collections::HashMap;
+///
 /// use computegraph::resolve::resolve;
 /// use tidu::differentiate;
 ///
 /// let view = resolve(vec![primal_fragment]);
-/// let linear = differentiate(&view, &[output_key], &[input_key], 1);
+/// let mut ctx = ();
+/// let linear = differentiate(
+///     &view,
+///     &[output_key],
+///     &[input_key],
+///     1,
+///     &mut ctx,
+///     &HashMap::new(),
+/// );
 /// assert_eq!(linear.tangent_outputs.len(), 1);
 /// ```
 pub fn differentiate<Op: PrimitiveOp>(
@@ -28,12 +38,14 @@ pub fn differentiate<Op: PrimitiveOp>(
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
+    ctx: &mut Op::ADContext,
+    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
 ) -> LinearFragment<Op>
 where
     Op::InputKey: ADKey,
 {
     let mut builder = FragmentBuilder::<Op>::new();
-    let topo_keys = topological_order(view, outputs);
+    let topo_keys = topological_order(view, outputs, aliases);
     let mut tangent_env: HashMap<GlobalValKey<Op>, Option<LocalValId>> = HashMap::new();
     let mut processed_ops = HashSet::new();
 
@@ -55,8 +67,11 @@ where
         };
 
         match val_def {
-            ValDef::Input { .. } => {
-                tangent_env.insert(key, None);
+            ValDef::Input { key: input_key } => {
+                let aliased_tangent = aliases
+                    .get(&input_key)
+                    .and_then(|aliased_key| tangent_env.get(aliased_key).copied().flatten());
+                tangent_env.insert(key, aliased_tangent);
             }
             ValDef::Produced {
                 op,
@@ -87,7 +102,7 @@ where
                 }
 
                 let tangent_out =
-                    op.linearize(&mut builder, &input_keys, &output_keys, &tangent_in);
+                    op.linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx);
                 assert_eq!(
                     tangent_out.len(),
                     output_keys.len(),
@@ -134,10 +149,12 @@ fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<G
 fn topological_order<Op: GraphOp>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
+    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
 ) -> Vec<GlobalValKey<Op>> {
     fn visit<Op: GraphOp>(
         key: &GlobalValKey<Op>,
         view: &ResolvedView<Op>,
+        aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
         visited: &mut HashSet<GlobalValKey<Op>>,
         order: &mut Vec<GlobalValKey<Op>>,
     ) {
@@ -145,10 +162,18 @@ fn topological_order<Op: GraphOp>(
             return;
         }
 
-        if let Some(ValDef::Produced { input_keys, .. }) = view.resolve_val(key) {
-            for input_key in input_keys {
-                visit(&input_key, view, visited, order);
+        match view.resolve_val(key) {
+            Some(ValDef::Produced { input_keys, .. }) => {
+                for input_key in input_keys {
+                    visit(&input_key, view, aliases, visited, order);
+                }
             }
+            Some(ValDef::Input { key: input_key }) => {
+                if let Some(aliased_key) = aliases.get(&input_key) {
+                    visit(aliased_key, view, aliases, visited, order);
+                }
+            }
+            None => {}
         }
 
         order.push(key.clone());
@@ -157,7 +182,7 @@ fn topological_order<Op: GraphOp>(
     let mut visited = HashSet::new();
     let mut order = Vec::new();
     for output_key in outputs {
-        visit(output_key, view, &mut visited, &mut order);
+        visit(output_key, view, aliases, &mut visited, &mut order);
     }
     order
 }

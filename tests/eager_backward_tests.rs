@@ -274,3 +274,39 @@ fn backward_dag_accumulates_x_squared_gradient() {
 
     assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
 }
+
+/// Fan-out test: f(x) = x + x, df/dx = 2.
+/// This exercises the cotangent accumulation (Op::add) path in eager_transpose_fragment.
+#[test]
+fn eager_transpose_fragment_fan_out_accumulation() {
+    // Build linear fragment for x + x: tangent(x) used twice
+    let mut builder = FragmentBuilder::<ScalarOp>::new();
+    let x = builder.add_input(sk("x"));
+    let sum = builder.add_op(
+        ScalarOp::Add,
+        vec![ValRef::Local(x), ValRef::Local(x)], // x used twice (fan-out)
+        OpMode::Primal,
+    );
+    let sum_key = builder.global_key(sum[0]).clone();
+    builder.set_outputs(vec![sum[0]]);
+
+    let linear = differentiate(
+        &resolve(vec![Arc::new(builder.build())]),
+        &[sum_key],
+        &[sk("x")],
+        1,
+        &mut (),
+        &HashMap::new(),
+    );
+
+    let mut emitter = ScalarEagerEmitter::new(HashMap::new());
+    let seed = emitter.push_value(arc(1.0));
+    let cotangent_inputs = eager_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ());
+
+    // df/dx = 2 (cotangent accumulated from two paths)
+    let dx = *emitter.value(cotangent_inputs[0].expect("active"));
+    assert!(
+        (dx - 2.0).abs() < 1e-12,
+        "fan-out gradient: expected 2.0, got {dx}"
+    );
+}

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 mod common;
 
 use std::sync::Arc;
@@ -124,6 +125,7 @@ fn jvp_x_plus_x() {
         &[sk("x")],
         1,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -147,6 +149,7 @@ fn jvp_x_times_y() {
         &[sk("x")],
         2,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -170,6 +173,7 @@ fn jvp_exp_ax() {
         &[sk("x")],
         3,
         &mut (),
+        &HashMap::new(),
     );
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
@@ -193,6 +197,7 @@ fn vjp_exp_ax() {
         &[sk("x")],
         4,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -220,6 +225,7 @@ fn vjp_x_plus_x_times_x() {
         &[sk("x")],
         5,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 
@@ -243,6 +249,7 @@ fn fof_x_squared() {
         &[sk("x")],
         6,
         &mut (),
+        &HashMap::new(),
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
@@ -254,6 +261,7 @@ fn fof_x_squared() {
         &[sk("x")],
         7,
         &mut (),
+        &HashMap::new(),
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
@@ -276,6 +284,7 @@ fn for_exp_ax() {
         &[sk("x")],
         8,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -288,6 +297,7 @@ fn for_exp_ax() {
         &[sk("x")],
         9,
         &mut (),
+        &HashMap::new(),
     );
     let d_ct_x_key =
         tangent_output_key(&second_linear, 0).expect("active forward-over-reverse output");
@@ -320,6 +330,7 @@ fn numerical_gradient_exp_ax() {
         &[sk("x")],
         10,
         &mut (),
+        &HashMap::new(),
     );
     let transposed = transpose(&linear, &mut ());
 

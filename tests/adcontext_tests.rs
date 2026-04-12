@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[allow(dead_code)]
 mod common;
 
@@ -147,7 +148,7 @@ fn differentiate_threads_ctx_to_all_ops() {
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let _linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx);
+    let _linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     assert_eq!(
         ctx.linearize_count, 2,
@@ -162,7 +163,7 @@ fn transpose_threads_ctx_to_all_ops() {
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx);
+    let linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     ctx.linearize_count = 0;
     ctx.transpose_count = 0;

@@ -8,7 +8,7 @@ use computegraph::fragment::FragmentBuilder;
 use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
 use tidu::LinearFragment;
 
 #[allow(dead_code)]
@@ -170,7 +170,7 @@ impl PrimitiveOp for ScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl OpEmitter<Self>,
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,

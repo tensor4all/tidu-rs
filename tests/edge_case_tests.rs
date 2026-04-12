@@ -8,7 +8,7 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
 use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
@@ -197,7 +197,7 @@ impl PrimitiveOp for ExtScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl OpEmitter<Self>,
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
@@ -513,7 +513,7 @@ impl PrimitiveOp for VectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl OpEmitter<Self>,
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,
@@ -901,7 +901,7 @@ impl PrimitiveOp for ComplexVectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl OpEmitter<Self>,
         cotangent_out: &[Option<LocalValId>],
         inputs: &[ValRef<Self>],
         mode: &OpMode,

@@ -274,3 +274,9 @@ where
 {
     linear.tangent_outputs[index].map(|local_id| linear.fragment.vals()[local_id].key.clone())
 }
+
+pub mod assertions;
+pub mod key_macros;
+pub mod linearize_macros;
+pub mod numeric;
+pub mod transpose_macros;

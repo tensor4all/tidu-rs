@@ -4,6 +4,7 @@ use chainrules::{ADKey, DiffPassId};
 #[macro_export]
 macro_rules! define_ad_key {
     ($name:ident) => {
+        #[allow(dead_code)]
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
         pub enum $name {
             User(String),

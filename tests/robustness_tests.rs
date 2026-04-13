@@ -3,6 +3,9 @@ mod common;
 use std::sync::Arc;
 
 use chainrules::{ADKey, DiffPassId, PrimitiveOp};
+use common::assertions::{
+    assert_complex_approx_eq, assert_scalar_approx_eq, assert_tensor_approx_eq,
+};
 use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
@@ -20,14 +23,6 @@ fn sk(name: &str) -> ScalarKey {
 
 fn scalar_input_key(name: &str) -> GlobalValKey<ScalarOp> {
     GlobalValKey::Input(sk(name))
-}
-
-fn assert_approx_eq(actual: f64, expected: f64) {
-    assert!(
-        (actual - expected).abs() <= TOL,
-        "expected {expected}, got {actual}, |delta|={}",
-        (actual - expected).abs()
-    );
 }
 
 fn build_scalar_exp_ax() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
@@ -118,28 +113,10 @@ fn build_scalar_output_y() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) 
     (Arc::new(builder.build()), y_key)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum ComplexScalarKey {
-    User(String),
-    Tangent {
-        of: Box<ComplexScalarKey>,
-        pass: DiffPassId,
-    },
-}
-
-impl ADKey for ComplexScalarKey {
-    fn tangent_of(&self, pass: DiffPassId) -> Self {
-        Self::Tangent {
-            of: Box::new(self.clone()),
-            pass,
-        }
-    }
-}
+define_ad_key!(ComplexScalarKey);
 
 #[derive(Clone, Debug, PartialEq)]
 struct C64(Complex64);
-
-// C64 inherent methods (Operand trait removed from computegraph)
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ComplexScalarOp {
@@ -191,75 +168,18 @@ impl PrimitiveOp for ComplexScalarOp {
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
-            Self::Add => match (tangent_in[0], tangent_in[1]) {
-                (Some(lhs), Some(rhs)) => {
-                    let sum = builder.add_op(
-                        Self::Add,
-                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
-                        OpMode::Linear {
-                            active_mask: vec![true, true],
-                        },
-                    );
-                    vec![Some(sum[0])]
-                }
-                (Some(lhs), None) => vec![Some(lhs)],
-                (None, Some(rhs)) => vec![Some(rhs)],
-                (None, None) => vec![None],
-            },
-            Self::Mul => {
-                let mut terms = Vec::new();
-
-                if let Some(dlhs) = tangent_in[0] {
-                    let term = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::Local(dlhs), ValRef::External(primal_in[1].clone())],
-                        OpMode::Linear {
-                            active_mask: vec![true, false],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                if let Some(drhs) = tangent_in[1] {
-                    let term = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::External(primal_in[0].clone()), ValRef::Local(drhs)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                match terms.as_slice() {
-                    [] => vec![None],
-                    [only] => vec![Some(*only)],
-                    [lhs, rhs] => {
-                        let sum = builder.add_op(
-                            Self::Add,
-                            vec![ValRef::Local(*lhs), ValRef::Local(*rhs)],
-                            OpMode::Linear {
-                                active_mask: vec![true, true],
-                            },
-                        );
-                        vec![Some(sum[0])]
-                    }
-                    _ => unreachable!("mul linearization creates at most two terms"),
-                }
+            Self::Add => {
+                linearize_add!(builder, ComplexScalarOp::Add, tangent_in[0], tangent_in[1])
             }
-            Self::Conj => match tangent_in[0] {
-                Some(dz) => {
-                    let out = builder.add_op(
-                        Self::Conj,
-                        vec![ValRef::Local(dz)],
-                        OpMode::Linear {
-                            active_mask: vec![true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
+            Self::Mul => linearize_mul!(
+                builder,
+                ComplexScalarOp::Mul,
+                ComplexScalarOp::Add,
+                primal_in,
+                tangent_in[0],
+                tangent_in[1]
+            ),
+            Self::Conj => linearize_conj!(builder, ComplexScalarOp::Conj, tangent_in[0]),
         }
     }
 
@@ -277,62 +197,16 @@ impl PrimitiveOp for ComplexScalarOp {
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => {
-                let active_mask = match mode {
-                    OpMode::Linear { active_mask } => active_mask,
-                    OpMode::Primal => return vec![None, None],
-                };
-                let mut result = vec![None, None];
-
-                if active_mask[0] {
-                    let conj_fixed = builder.add_op(
-                        Self::Conj,
-                        vec![inputs[1].clone()],
-                        OpMode::Linear {
-                            active_mask: vec![false],
-                        },
-                    );
-                    let out = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::Local(conj_fixed[0]), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[0] = Some(out[0]);
-                }
-
-                if active_mask[1] {
-                    let conj_fixed = builder.add_op(
-                        Self::Conj,
-                        vec![inputs[0].clone()],
-                        OpMode::Linear {
-                            active_mask: vec![false],
-                        },
-                    );
-                    let out = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::Local(conj_fixed[0]), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[1] = Some(out[0]);
-                }
-
-                result
-            }
-            Self::Conj => {
-                let out = builder.add_op(
-                    Self::Conj,
-                    vec![ValRef::Local(ct)],
-                    OpMode::Linear {
-                        active_mask: vec![true],
-                    },
-                );
-                vec![Some(out[0])]
-            }
+            Self::Add => transpose_add!(ct),
+            Self::Mul => transpose_mul_complex!(
+                builder,
+                ComplexScalarOp::Mul,
+                ComplexScalarOp::Conj,
+                inputs,
+                ct,
+                mode
+            ),
+            Self::Conj => transpose_conj!(builder, ComplexScalarOp::Conj, ct),
         }
     }
 }
@@ -347,16 +221,6 @@ fn complex_input_key(name: &str) -> GlobalValKey<ComplexScalarOp> {
 
 fn c(re: f64, im: f64) -> C64 {
     C64(Complex64::new(re, im))
-}
-
-fn assert_complex_approx_eq(actual: &C64, expected: Complex64) {
-    let delta = actual.0 - expected;
-    assert!(
-        delta.norm() <= TOL,
-        "expected {expected:?}, got {:?}, |delta|={}",
-        actual.0,
-        delta.norm()
-    );
 }
 
 fn complex_inner_product(lhs: &C64, rhs: &C64) -> f64 {
@@ -400,28 +264,10 @@ fn build_complex_z_squared() -> (
     (Arc::new(builder.build()), y_key)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum VectorKey {
-    User(String),
-    Tangent {
-        of: Box<VectorKey>,
-        pass: DiffPassId,
-    },
-}
-
-impl ADKey for VectorKey {
-    fn tangent_of(&self, pass: DiffPassId) -> Self {
-        Self::Tangent {
-            of: Box::new(self.clone()),
-            pass,
-        }
-    }
-}
+define_ad_key!(VectorKey);
 
 #[derive(Clone, Debug, PartialEq)]
 struct Tensor(ArrayD<f64>);
-
-// Tensor inherent methods (Operand trait removed from computegraph)
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum VectorOp {
@@ -468,62 +314,15 @@ impl PrimitiveOp for VectorOp {
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
-            Self::Add => match (tangent_in[0], tangent_in[1]) {
-                (Some(lhs), Some(rhs)) => {
-                    let sum = builder.add_op(
-                        Self::Add,
-                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
-                        OpMode::Linear {
-                            active_mask: vec![true, true],
-                        },
-                    );
-                    vec![Some(sum[0])]
-                }
-                (Some(lhs), None) => vec![Some(lhs)],
-                (None, Some(rhs)) => vec![Some(rhs)],
-                (None, None) => vec![None],
-            },
-            Self::Mul => {
-                let mut terms = Vec::new();
-
-                if let Some(dlhs) = tangent_in[0] {
-                    let term = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::Local(dlhs), ValRef::External(primal_in[1].clone())],
-                        OpMode::Linear {
-                            active_mask: vec![true, false],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                if let Some(drhs) = tangent_in[1] {
-                    let term = builder.add_op(
-                        Self::Mul,
-                        vec![ValRef::External(primal_in[0].clone()), ValRef::Local(drhs)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                match terms.as_slice() {
-                    [] => vec![None],
-                    [only] => vec![Some(*only)],
-                    [lhs, rhs] => {
-                        let sum = builder.add_op(
-                            Self::Add,
-                            vec![ValRef::Local(*lhs), ValRef::Local(*rhs)],
-                            OpMode::Linear {
-                                active_mask: vec![true, true],
-                            },
-                        );
-                        vec![Some(sum[0])]
-                    }
-                    _ => unreachable!("mul linearization creates at most two terms"),
-                }
-            }
+            Self::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
+            Self::Mul => linearize_mul!(
+                builder,
+                VectorOp::Mul,
+                VectorOp::Add,
+                primal_in,
+                tangent_in[0],
+                tangent_in[1]
+            ),
         }
     }
 
@@ -541,38 +340,8 @@ impl PrimitiveOp for VectorOp {
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => {
-                let active_mask = match mode {
-                    OpMode::Linear { active_mask } => active_mask,
-                    OpMode::Primal => return vec![None, None],
-                };
-                let mut result = vec![None, None];
-
-                if active_mask[0] {
-                    let out = builder.add_op(
-                        Self::Mul,
-                        vec![inputs[1].clone(), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[0] = Some(out[0]);
-                }
-
-                if active_mask[1] {
-                    let out = builder.add_op(
-                        Self::Mul,
-                        vec![inputs[0].clone(), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[1] = Some(out[0]);
-                }
-
-                result
-            }
+            Self::Add => transpose_add!(ct),
+            Self::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, mode),
         }
     }
 }
@@ -590,27 +359,6 @@ fn vector(values: &[f64]) -> Tensor {
         ArrayD::from_shape_vec(IxDyn(&[values.len()]), values.to_vec())
             .unwrap_or_else(|err| panic!("failed to build vector tensor from {values:?}: {err}")),
     )
-}
-
-fn assert_tensor_approx_eq(actual: &Tensor, expected: &[f64]) {
-    let expected = vector(expected);
-    assert_eq!(
-        actual.0.shape(),
-        expected.0.shape(),
-        "shape mismatch: expected {:?}, got {:?}",
-        expected.0.shape(),
-        actual.0.shape()
-    );
-
-    for (index, (actual_value, expected_value)) in
-        actual.0.iter().zip(expected.0.iter()).enumerate()
-    {
-        let delta = (actual_value - expected_value).abs();
-        assert!(
-            delta <= TOL,
-            "entry {index}: expected {expected_value}, got {actual_value}, |delta|={delta}"
-        );
-    }
 }
 
 fn build_vector_x_squared() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
@@ -665,9 +413,9 @@ fn adjoint_consistency_exp_ax() {
         ],
     )[0];
 
-    assert_approx_eq(dy, 2.0 * 2.0_f64.exp() * dx);
-    assert_approx_eq(ct_x, 2.0 * 2.0_f64.exp() * ct_y);
-    assert_approx_eq(ct_y * dy, ct_x * dx);
+    assert_scalar_approx_eq(dy, 2.0 * 2.0_f64.exp() * dx, TOL);
+    assert_scalar_approx_eq(ct_x, 2.0 * 2.0_f64.exp() * ct_y, TOL);
+    assert_scalar_approx_eq(ct_y * dy, ct_x * dx, TOL);
 }
 
 #[test]
@@ -701,9 +449,9 @@ fn adjoint_consistency_x_plus_x_times_x() {
         &[(scalar_input_key("x"), 3.0), (ct_y_key, ct_y)],
     )[0];
 
-    assert_approx_eq(dy, 6.0);
-    assert_approx_eq(ct_x, 8.4);
-    assert_approx_eq(ct_y * dy, ct_x * dx);
+    assert_scalar_approx_eq(dy, 6.0, TOL);
+    assert_scalar_approx_eq(ct_x, 8.4, TOL);
+    assert_scalar_approx_eq(ct_y * dy, ct_x * dx, TOL);
 }
 
 #[test]
@@ -742,11 +490,12 @@ fn adjoint_consistency_complex() {
     )[0]
     .clone();
 
-    assert_complex_approx_eq(&dy, Complex64::new(2.2, 0.0));
-    assert_complex_approx_eq(&ct_z, Complex64::new(1.0, 2.0));
-    assert_approx_eq(
+    assert_complex_approx_eq(dy.0, Complex64::new(2.2, 0.0), TOL);
+    assert_complex_approx_eq(ct_z.0, Complex64::new(1.0, 2.0), TOL);
+    assert_scalar_approx_eq(
         complex_inner_product(&ct_y, &dy),
         complex_inner_product(&ct_z, &dz),
+        TOL,
     );
 }
 
@@ -801,8 +550,8 @@ fn diamond_pattern_shared_subexpression() {
     )[0];
 
     let expected = 2.0 * 1.0_f64.exp();
-    assert_approx_eq(dy, expected);
-    assert_approx_eq(ct_x, expected);
+    assert_scalar_approx_eq(dy, expected, TOL);
+    assert_scalar_approx_eq(ct_x, expected, TOL);
 }
 
 #[test]
@@ -830,8 +579,8 @@ fn multi_variable_vjp() {
         ],
     );
 
-    assert_approx_eq(results[0], 3.0);
-    assert_approx_eq(results[1], 2.0);
+    assert_scalar_approx_eq(results[0], 3.0, TOL);
+    assert_scalar_approx_eq(results[1], 2.0, TOL);
 }
 
 #[test]
@@ -860,7 +609,7 @@ fn ror_x_plus_x_times_x() {
         &[(scalar_input_key("x"), 3.0), (d_ct_x_key, 1.0)],
     );
 
-    assert_approx_eq(result[0], 12.0);
+    assert_scalar_approx_eq(result[0], 12.0, TOL);
 }
 
 #[test]
@@ -903,7 +652,7 @@ fn for_complex_z_squared() {
         ],
     );
 
-    assert_complex_approx_eq(&result[0], Complex64::new(2.0, 0.0));
+    assert_complex_approx_eq(result[0].0, Complex64::new(2.0, 0.0), TOL);
 }
 
 #[test]
@@ -935,8 +684,8 @@ fn jvp_identity() {
         &[(scalar_input_key("x"), 4.0), (ct_y_key, 1.0)],
     )[0];
 
-    assert_approx_eq(dy, 1.0);
-    assert_approx_eq(ct_x, 1.0);
+    assert_scalar_approx_eq(dy, 1.0, TOL);
+    assert_scalar_approx_eq(ct_x, 1.0, TOL);
 }
 
 #[test]
@@ -999,5 +748,5 @@ fn fof_vector_x_squared() {
         ],
     );
 
-    assert_tensor_approx_eq(&result[0], &[2.0, 2.0]);
+    assert_tensor_approx_eq(&result[0].0, &vector(&[2.0, 2.0]).0, TOL);
 }

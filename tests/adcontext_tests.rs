@@ -9,20 +9,7 @@ use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::GraphOp;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum CtxKey {
-    User(String),
-    Tangent { of: Box<CtxKey>, pass: DiffPassId },
-}
-
-impl ADKey for CtxKey {
-    fn tangent_of(&self, pass: DiffPassId) -> Self {
-        Self::Tangent {
-            of: Box::new(self.clone()),
-            pass,
-        }
-    }
-}
+define_ad_key!(CtxKey);
 
 #[derive(Default)]
 struct CountingContext {
@@ -71,21 +58,7 @@ impl PrimitiveOp for CountingOp {
         ctx.linearize_count += 1;
 
         match self {
-            Self::Add => match (tangent_in[0], tangent_in[1]) {
-                (Some(dx), Some(dy)) => {
-                    let out = builder.add_op(
-                        Self::Add,
-                        vec![ValRef::Local(dx), ValRef::Local(dy)],
-                        OpMode::Linear {
-                            active_mask: vec![true, true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                (Some(dx), None) => vec![Some(dx)],
-                (None, Some(dy)) => vec![Some(dy)],
-                (None, None) => vec![None],
-            },
+            Self::Add => linearize_add!(builder, CountingOp::Add, tangent_in[0], tangent_in[1]),
             Self::Identity => match tangent_in[0] {
                 Some(dx) => {
                     let out = builder.add_op(
@@ -114,7 +87,7 @@ impl PrimitiveOp for CountingOp {
 
         match self {
             Self::Add => match cotangent_out[0] {
-                Some(ct) => vec![Some(ct), Some(ct)],
+                Some(ct) => transpose_add!(ct),
                 None => vec![None, None],
             },
             Self::Identity => vec![cotangent_out[0]],

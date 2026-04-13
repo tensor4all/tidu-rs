@@ -3,6 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use chainrules::{ADKey, DiffPassId, PrimitiveOp};
+use common::assertions::assert_tensor_approx_eq;
 use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
@@ -14,23 +15,7 @@ use tidu::{differentiate, transpose};
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum VectorKey {
-    User(String),
-    Tangent {
-        of: Box<VectorKey>,
-        pass: DiffPassId,
-    },
-}
-
-impl ADKey for VectorKey {
-    fn tangent_of(&self, pass: DiffPassId) -> Self {
-        VectorKey::Tangent {
-            of: Box::new(self.clone()),
-            pass,
-        }
-    }
-}
+define_ad_key!(VectorKey);
 
 #[derive(Clone, Debug, PartialEq)]
 struct Tensor(ArrayD<f64>);
@@ -155,88 +140,17 @@ impl PrimitiveOp for VectorOp {
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
-            VectorOp::Add => match (tangent_in[0], tangent_in[1]) {
-                (Some(lhs), Some(rhs)) => {
-                    let sum = builder.add_op(
-                        VectorOp::Add,
-                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
-                        OpMode::Linear {
-                            active_mask: vec![true, true],
-                        },
-                    );
-                    vec![Some(sum[0])]
-                }
-                (Some(lhs), None) => vec![Some(lhs)],
-                (None, Some(rhs)) => vec![Some(rhs)],
-                (None, None) => vec![None],
-            },
-            VectorOp::Mul => {
-                let mut terms = Vec::new();
-
-                if let Some(dlhs) = tangent_in[0] {
-                    let term = builder.add_op(
-                        VectorOp::Mul,
-                        vec![ValRef::Local(dlhs), ValRef::External(primal_in[1].clone())],
-                        OpMode::Linear {
-                            active_mask: vec![true, false],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                if let Some(drhs) = tangent_in[1] {
-                    let term = builder.add_op(
-                        VectorOp::Mul,
-                        vec![ValRef::External(primal_in[0].clone()), ValRef::Local(drhs)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                match terms.as_slice() {
-                    [] => vec![None],
-                    [only] => vec![Some(*only)],
-                    [lhs, rhs] => {
-                        let sum = builder.add_op(
-                            VectorOp::Add,
-                            vec![ValRef::Local(*lhs), ValRef::Local(*rhs)],
-                            OpMode::Linear {
-                                active_mask: vec![true, true],
-                            },
-                        );
-                        vec![Some(sum[0])]
-                    }
-                    _ => unreachable!("mul linearization creates at most two terms"),
-                }
-            }
-            VectorOp::Exp => match tangent_in[0] {
-                Some(dx) => {
-                    let out = builder.add_op(
-                        VectorOp::Mul,
-                        vec![ValRef::External(primal_out[0].clone()), ValRef::Local(dx)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
-            VectorOp::Neg => match tangent_in[0] {
-                Some(dx) => {
-                    let out = builder.add_op(
-                        VectorOp::Neg,
-                        vec![ValRef::Local(dx)],
-                        OpMode::Linear {
-                            active_mask: vec![true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
+            VectorOp::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
+            VectorOp::Mul => linearize_mul!(
+                builder,
+                VectorOp::Mul,
+                VectorOp::Add,
+                primal_in,
+                tangent_in[0],
+                tangent_in[1]
+            ),
+            VectorOp::Exp => linearize_exp!(builder, VectorOp::Mul, primal_out[0], tangent_in[0]),
+            VectorOp::Neg => linearize_neg!(builder, VectorOp::Neg, tangent_in[0]),
             VectorOp::ReduceSum { axes, input_shape } => match tangent_in[0] {
                 Some(dx) => {
                     let out = builder.add_op(
@@ -286,50 +200,10 @@ impl PrimitiveOp for VectorOp {
         };
 
         match self {
-            VectorOp::Add => vec![Some(ct), Some(ct)],
-            VectorOp::Mul => {
-                let active_mask = match mode {
-                    OpMode::Linear { active_mask } => active_mask,
-                    OpMode::Primal => return vec![None, None],
-                };
-
-                let mut result = vec![None, None];
-
-                if active_mask[0] {
-                    let out = builder.add_op(
-                        VectorOp::Mul,
-                        vec![inputs[1].clone(), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[0] = Some(out[0]);
-                }
-
-                if active_mask[1] {
-                    let out = builder.add_op(
-                        VectorOp::Mul,
-                        vec![inputs[0].clone(), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[1] = Some(out[0]);
-                }
-
-                result
-            }
+            VectorOp::Add => transpose_add!(ct),
+            VectorOp::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, mode),
             VectorOp::Exp => panic!("transpose_rule called on primal-only Exp"),
-            VectorOp::Neg => {
-                let out = builder.add_op(
-                    VectorOp::Neg,
-                    vec![ValRef::Local(ct)],
-                    OpMode::Linear {
-                        active_mask: vec![true],
-                    },
-                );
-                vec![Some(out[0])]
-            }
+            VectorOp::Neg => transpose_neg!(builder, VectorOp::Neg, ct),
             VectorOp::ReduceSum { axes, input_shape } => {
                 let dims = (0..input_shape.len())
                     .filter(|axis| !axes.contains(axis))
@@ -383,26 +257,6 @@ fn vector(values: &[f64]) -> Tensor {
         ArrayD::from_shape_vec(IxDyn(&[values.len()]), values.to_vec())
             .unwrap_or_else(|err| panic!("failed to build vector tensor from {values:?}: {err}")),
     )
-}
-
-fn assert_tensor_approx_eq(actual: &Tensor, expected: &Tensor, tol: f64) {
-    assert_eq!(
-        actual.0.shape(),
-        expected.0.shape(),
-        "shape mismatch: expected {:?}, got {:?}",
-        expected.0.shape(),
-        actual.0.shape()
-    );
-
-    for (index, (actual_value, expected_value)) in
-        actual.0.iter().zip(expected.0.iter()).enumerate()
-    {
-        let delta = (actual_value - expected_value).abs();
-        assert!(
-            delta <= tol,
-            "entry {index}: expected {expected_value}, got {actual_value}, |delta|={delta}"
-        );
-    }
 }
 
 fn build_exp_ax() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
@@ -499,8 +353,8 @@ fn jvp_elementwise_exp_ax() {
     );
 
     assert_tensor_approx_eq(
-        &result[0],
-        &vector(&[2.0 * 2.0_f64.exp(), 3.0 * 6.0_f64.exp()]),
+        &result[0].0,
+        &vector(&[2.0 * 2.0_f64.exp(), 3.0 * 6.0_f64.exp()]).0,
         TOL,
     );
 }
@@ -530,8 +384,8 @@ fn vjp_elementwise_exp_ax() {
     );
 
     assert_tensor_approx_eq(
-        &result[0],
-        &vector(&[2.0 * 2.0_f64.exp(), 3.0 * 6.0_f64.exp()]),
+        &result[0].0,
+        &vector(&[2.0 * 2.0_f64.exp(), 3.0 * 6.0_f64.exp()]).0,
         TOL,
     );
 }
@@ -560,8 +414,8 @@ fn jvp_sum_exp_ax() {
     );
 
     assert_tensor_approx_eq(
-        &result[0],
-        &scalar(2.0 * 2.0_f64.exp() + 3.0 * 6.0_f64.exp()),
+        &result[0].0,
+        &scalar(2.0 * 2.0_f64.exp() + 3.0 * 6.0_f64.exp()).0,
         TOL,
     );
 }
@@ -591,8 +445,8 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
     );
 
     assert_tensor_approx_eq(
-        &result[0],
-        &vector(&[4.0 * 2.0_f64.exp(), 6.0 * 6.0_f64.exp()]),
+        &result[0].0,
+        &vector(&[4.0 * 2.0_f64.exp(), 6.0 * 6.0_f64.exp()]).0,
         TOL,
     );
 }
@@ -622,5 +476,5 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
     );
     let numerical = finite_difference_sum_exp_ax(primal, &y_key);
 
-    assert_tensor_approx_eq(&vjp[0], &numerical, NUM_TOL);
+    assert_tensor_approx_eq(&vjp[0].0, &numerical.0, NUM_TOL);
 }

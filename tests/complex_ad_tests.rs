@@ -3,6 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use chainrules::{ADKey, DiffPassId, PrimitiveOp};
+use common::assertions::assert_complex_approx_eq;
 use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
@@ -14,23 +15,7 @@ use tidu::{differentiate, transpose};
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum ComplexScalarKey {
-    User(String),
-    Tangent {
-        of: Box<ComplexScalarKey>,
-        pass: DiffPassId,
-    },
-}
-
-impl ADKey for ComplexScalarKey {
-    fn tangent_of(&self, pass: DiffPassId) -> Self {
-        ComplexScalarKey::Tangent {
-            of: Box::new(self.clone()),
-            pass,
-        }
-    }
-}
+define_ad_key!(ComplexScalarKey);
 
 #[derive(Clone, Debug, PartialEq)]
 struct C64(Complex64);
@@ -107,101 +92,22 @@ impl PrimitiveOp for ComplexScalarOp {
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
         match self {
-            ComplexScalarOp::Add => match (tangent_in[0], tangent_in[1]) {
-                (Some(lhs), Some(rhs)) => {
-                    let sum = builder.add_op(
-                        ComplexScalarOp::Add,
-                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
-                        OpMode::Linear {
-                            active_mask: vec![true, true],
-                        },
-                    );
-                    vec![Some(sum[0])]
-                }
-                (Some(lhs), None) => vec![Some(lhs)],
-                (None, Some(rhs)) => vec![Some(rhs)],
-                (None, None) => vec![None],
-            },
-            ComplexScalarOp::Mul => {
-                let mut terms = Vec::new();
-
-                if let Some(dlhs) = tangent_in[0] {
-                    let term = builder.add_op(
-                        ComplexScalarOp::Mul,
-                        vec![ValRef::Local(dlhs), ValRef::External(primal_in[1].clone())],
-                        OpMode::Linear {
-                            active_mask: vec![true, false],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                if let Some(drhs) = tangent_in[1] {
-                    let term = builder.add_op(
-                        ComplexScalarOp::Mul,
-                        vec![ValRef::External(primal_in[0].clone()), ValRef::Local(drhs)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    terms.push(term[0]);
-                }
-
-                match terms.as_slice() {
-                    [] => vec![None],
-                    [only] => vec![Some(*only)],
-                    [lhs, rhs] => {
-                        let sum = builder.add_op(
-                            ComplexScalarOp::Add,
-                            vec![ValRef::Local(*lhs), ValRef::Local(*rhs)],
-                            OpMode::Linear {
-                                active_mask: vec![true, true],
-                            },
-                        );
-                        vec![Some(sum[0])]
-                    }
-                    _ => unreachable!("mul linearization creates at most two terms"),
-                }
+            ComplexScalarOp::Add => {
+                linearize_add!(builder, ComplexScalarOp::Add, tangent_in[0], tangent_in[1])
             }
-            ComplexScalarOp::Exp => match tangent_in[0] {
-                Some(dx) => {
-                    let out = builder.add_op(
-                        ComplexScalarOp::Mul,
-                        vec![ValRef::External(primal_out[0].clone()), ValRef::Local(dx)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
-            ComplexScalarOp::Neg => match tangent_in[0] {
-                Some(dx) => {
-                    let out = builder.add_op(
-                        ComplexScalarOp::Neg,
-                        vec![ValRef::Local(dx)],
-                        OpMode::Linear {
-                            active_mask: vec![true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
-            ComplexScalarOp::Conj => match tangent_in[0] {
-                Some(dx) => {
-                    let out = builder.add_op(
-                        ComplexScalarOp::Conj,
-                        vec![ValRef::Local(dx)],
-                        OpMode::Linear {
-                            active_mask: vec![true],
-                        },
-                    );
-                    vec![Some(out[0])]
-                }
-                None => vec![None],
-            },
+            ComplexScalarOp::Mul => linearize_mul!(
+                builder,
+                ComplexScalarOp::Mul,
+                ComplexScalarOp::Add,
+                primal_in,
+                tangent_in[0],
+                tangent_in[1]
+            ),
+            ComplexScalarOp::Exp => {
+                linearize_exp!(builder, ComplexScalarOp::Mul, primal_out[0], tangent_in[0])
+            }
+            ComplexScalarOp::Neg => linearize_neg!(builder, ComplexScalarOp::Neg, tangent_in[0]),
+            ComplexScalarOp::Conj => linearize_conj!(builder, ComplexScalarOp::Conj, tangent_in[0]),
         }
     }
 
@@ -219,74 +125,18 @@ impl PrimitiveOp for ComplexScalarOp {
         };
 
         match self {
-            ComplexScalarOp::Add => vec![Some(ct), Some(ct)],
-            ComplexScalarOp::Mul => {
-                let active_mask = match mode {
-                    OpMode::Linear { active_mask } => active_mask,
-                    OpMode::Primal => return vec![None, None],
-                };
-
-                let mut result = vec![None, None];
-
-                if active_mask[0] {
-                    let conj_fixed = builder.add_op(
-                        ComplexScalarOp::Conj,
-                        vec![inputs[1].clone()],
-                        OpMode::Linear {
-                            active_mask: vec![false],
-                        },
-                    );
-                    let out = builder.add_op(
-                        ComplexScalarOp::Mul,
-                        vec![ValRef::Local(conj_fixed[0]), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[0] = Some(out[0]);
-                }
-
-                if active_mask[1] {
-                    let conj_fixed = builder.add_op(
-                        ComplexScalarOp::Conj,
-                        vec![inputs[0].clone()],
-                        OpMode::Linear {
-                            active_mask: vec![false],
-                        },
-                    );
-                    let out = builder.add_op(
-                        ComplexScalarOp::Mul,
-                        vec![ValRef::Local(conj_fixed[0]), ValRef::Local(ct)],
-                        OpMode::Linear {
-                            active_mask: vec![false, true],
-                        },
-                    );
-                    result[1] = Some(out[0]);
-                }
-
-                result
-            }
+            ComplexScalarOp::Add => transpose_add!(ct),
+            ComplexScalarOp::Mul => transpose_mul_complex!(
+                builder,
+                ComplexScalarOp::Mul,
+                ComplexScalarOp::Conj,
+                inputs,
+                ct,
+                mode
+            ),
             ComplexScalarOp::Exp => panic!("transpose_rule called on primal-only Exp"),
-            ComplexScalarOp::Neg => {
-                let out = builder.add_op(
-                    ComplexScalarOp::Neg,
-                    vec![ValRef::Local(ct)],
-                    OpMode::Linear {
-                        active_mask: vec![true],
-                    },
-                );
-                vec![Some(out[0])]
-            }
-            ComplexScalarOp::Conj => {
-                let out = builder.add_op(
-                    ComplexScalarOp::Conj,
-                    vec![ValRef::Local(ct)],
-                    OpMode::Linear {
-                        active_mask: vec![true],
-                    },
-                );
-                vec![Some(out[0])]
-            }
+            ComplexScalarOp::Neg => transpose_neg!(builder, ComplexScalarOp::Neg, ct),
+            ComplexScalarOp::Conj => transpose_conj!(builder, ComplexScalarOp::Conj, ct),
         }
     }
 }
@@ -301,16 +151,6 @@ fn input_key(name: &str) -> GlobalValKey<ComplexScalarOp> {
 
 fn c(re: f64, im: f64) -> C64 {
     C64(Complex64::new(re, im))
-}
-
-fn assert_complex_approx_eq(actual: &C64, expected: Complex64, tol: f64) {
-    let delta = actual.0 - expected;
-    assert!(
-        delta.norm() <= tol,
-        "expected {expected:?}, got {:?}, |delta|={}",
-        actual.0,
-        delta.norm()
-    );
 }
 
 fn build_conj_z() -> (
@@ -443,7 +283,7 @@ fn jvp_conj_z() {
         &[(input_key("z"), c(2.0, -3.0)), (dz_key, c(1.0, 1.0))],
     );
 
-    assert_complex_approx_eq(&result[0], Complex64::new(1.0, -1.0), TOL);
+    assert_complex_approx_eq(result[0].0, Complex64::new(1.0, -1.0), TOL);
 }
 
 #[test]
@@ -466,7 +306,7 @@ fn vjp_conj_z() {
         &[(input_key("z"), c(-0.5, 0.75)), (ct_y_key, c(1.0, 1.0))],
     );
 
-    assert_complex_approx_eq(&result[0], Complex64::new(1.0, -1.0), TOL);
+    assert_complex_approx_eq(result[0].0, Complex64::new(1.0, -1.0), TOL);
 }
 
 #[test]
@@ -498,7 +338,7 @@ fn jvp_z_times_w() {
         ],
     );
 
-    assert_complex_approx_eq(&result[0], dz * w + z * dw, TOL);
+    assert_complex_approx_eq(result[0].0, dz * w + z * dw, TOL);
 }
 
 #[test]
@@ -525,7 +365,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
         ],
     );
 
-    assert_complex_approx_eq(&result[0], Complex64::new(2.0, -1.0), TOL);
+    assert_complex_approx_eq(result[0].0, Complex64::new(2.0, -1.0), TOL);
 }
 
 #[test]
@@ -549,7 +389,7 @@ fn vjp_abs_squared_returns_two_z() {
         &[(input_key("z"), C64(z)), (ct_y_key, c(1.0, 0.0))],
     );
 
-    assert_complex_approx_eq(&result[0], Complex64::new(2.0, 4.0), TOL);
+    assert_complex_approx_eq(result[0].0, Complex64::new(2.0, 4.0), TOL);
 }
 
 #[test]

@@ -2,6 +2,8 @@ mod common;
 
 use std::sync::Arc;
 
+use common::assertions::assert_scalar_approx_eq;
+use common::numeric::five_point_derivative;
 use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
@@ -16,13 +18,6 @@ fn sk(name: &str) -> ScalarKey {
 
 fn input_key(name: &str) -> GlobalValKey<ScalarOp> {
     GlobalValKey::Input(sk(name))
-}
-
-fn assert_approx_eq(actual: f64, expected: f64) {
-    assert!(
-        (actual - expected).abs() <= TOL,
-        "expected {expected}, got {actual}"
-    );
 }
 
 fn build_x_plus_x() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
@@ -102,17 +97,17 @@ fn finite_difference_exp_ax(
     primal: Arc<Fragment<ScalarOp>>,
     y_key: &GlobalValKey<ScalarOp>,
 ) -> f64 {
-    let h = 1e-3;
-    let sample = |x: f64| {
-        evaluate(
-            vec![primal.clone()],
-            std::slice::from_ref(y_key),
-            &[(input_key("x"), x), (input_key("a"), 2.0)],
-        )[0]
-    };
-
-    (-sample(1.0 + 2.0 * h) + 8.0 * sample(1.0 + h) - 8.0 * sample(1.0 - h) + sample(1.0 - 2.0 * h))
-        / (12.0 * h)
+    five_point_derivative(
+        |x| {
+            evaluate(
+                vec![primal.clone()],
+                std::slice::from_ref(y_key),
+                &[(input_key("x"), x), (input_key("a"), 2.0)],
+            )[0]
+        },
+        1.0,
+        1e-3,
+    )
 }
 
 #[test]
@@ -134,8 +129,8 @@ fn jvp_x_plus_x() {
         &[(input_key("x"), 3.0), (dx_key, 1.0)],
     );
 
-    assert_approx_eq(results[0], 6.0);
-    assert_approx_eq(results[1], 2.0);
+    assert_scalar_approx_eq(results[0], 6.0, TOL);
+    assert_scalar_approx_eq(results[1], 2.0, TOL);
 }
 
 #[test]
@@ -157,8 +152,8 @@ fn jvp_x_times_y() {
         &[(input_key("x"), 2.0), (input_key("y"), 3.0), (dx_key, 1.0)],
     );
 
-    assert_approx_eq(results[0], 6.0);
-    assert_approx_eq(results[1], 3.0);
+    assert_scalar_approx_eq(results[0], 6.0, TOL);
+    assert_scalar_approx_eq(results[1], 3.0, TOL);
 }
 
 #[test]
@@ -180,8 +175,8 @@ fn jvp_exp_ax() {
         &[(input_key("x"), 1.0), (input_key("a"), 2.0), (dx_key, 1.0)],
     );
 
-    assert_approx_eq(results[0], 2.0_f64.exp());
-    assert_approx_eq(results[1], 2.0 * 2.0_f64.exp());
+    assert_scalar_approx_eq(results[0], 2.0_f64.exp(), TOL);
+    assert_scalar_approx_eq(results[1], 2.0 * 2.0_f64.exp(), TOL);
 }
 
 #[test]
@@ -208,7 +203,7 @@ fn vjp_exp_ax() {
         ],
     );
 
-    assert_approx_eq(result[0], 2.0 * 2.0_f64.exp());
+    assert_scalar_approx_eq(result[0], 2.0 * 2.0_f64.exp(), TOL);
 }
 
 #[test]
@@ -231,7 +226,7 @@ fn vjp_x_plus_x_times_x() {
         &[(input_key("x"), 3.0), (ct_y_key, 1.0)],
     );
 
-    assert_approx_eq(result[0], 12.0);
+    assert_scalar_approx_eq(result[0], 12.0, TOL);
 }
 
 #[test]
@@ -264,7 +259,7 @@ fn fof_x_squared() {
         &[(input_key("x"), 3.0), (dx1_key, 1.0), (dx2_key, 1.0)],
     );
 
-    assert_approx_eq(result[0], 2.0);
+    assert_scalar_approx_eq(result[0], 2.0, TOL);
 }
 
 #[test]
@@ -308,7 +303,7 @@ fn for_exp_ax() {
         ],
     );
 
-    assert_approx_eq(result[0], 4.0 * 2.0_f64.exp());
+    assert_scalar_approx_eq(result[0], 4.0 * 2.0_f64.exp(), TOL);
 }
 
 #[test]
@@ -336,5 +331,5 @@ fn numerical_gradient_exp_ax() {
     )[0];
 
     let numerical = finite_difference_exp_ax(primal, &y_key);
-    assert_approx_eq(vjp, numerical);
+    assert_scalar_approx_eq(vjp, numerical, TOL);
 }

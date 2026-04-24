@@ -190,43 +190,33 @@ fn eager_transpose_fragment_propagates_add_cotangents() {
 
 #[test]
 fn topo_sort_grad_dag_orders_dependencies_before_output() {
-    let leaf = Arc::new(GradNode {
-        op: ScalarOp::Add,
-        primal_in_keys: vec![GlobalValKey::Input(sk("a")), GlobalValKey::Input(sk("b"))],
-        primal_out_keys: vec![GlobalValKey::Input(sk("leaf_out"))],
-        saved_data: HashMap::new(),
-        input_edges: vec![
-            GradEdge {
-                node: None,
-                key: GlobalValKey::Input(sk("a")),
-                requires_grad: true,
-            },
-            GradEdge {
-                node: None,
-                key: GlobalValKey::Input(sk("b")),
-                requires_grad: true,
-            },
+    let leaf = Arc::new(GradNode::new(
+        ScalarOp::Add,
+        vec![GlobalValKey::Input(sk("a")), GlobalValKey::Input(sk("b"))],
+        vec![GlobalValKey::Input(sk("leaf_out"))],
+        HashMap::new(),
+        vec![
+            GradEdge::new(None, GlobalValKey::Input(sk("a")), true),
+            GradEdge::new(None, GlobalValKey::Input(sk("b")), true),
         ],
-        output_idx: 0,
-    });
-    let root = Arc::new(GradNode {
-        op: ScalarOp::Neg,
-        primal_in_keys: vec![GlobalValKey::Input(sk("leaf_out"))],
-        primal_out_keys: vec![GlobalValKey::Input(sk("root_out"))],
-        saved_data: HashMap::new(),
-        input_edges: vec![GradEdge {
-            node: Some(leaf.clone()),
-            key: GlobalValKey::Input(sk("leaf_out")),
-            requires_grad: true,
-        }],
-        output_idx: 0,
-    });
+    ));
+    let root = Arc::new(GradNode::new(
+        ScalarOp::Neg,
+        vec![GlobalValKey::Input(sk("leaf_out"))],
+        vec![GlobalValKey::Input(sk("root_out"))],
+        HashMap::new(),
+        vec![GradEdge::new(
+            Some(leaf.clone()),
+            GlobalValKey::Input(sk("leaf_out")),
+            true,
+        )],
+    ));
 
     let sorted = topo_sort_grad_dag(&Some(root));
 
     assert_eq!(sorted.len(), 2);
     assert!(Arc::ptr_eq(&sorted[0], &leaf));
-    assert_eq!(sorted[1].op, ScalarOp::Neg);
+    assert_eq!(sorted[1].op(), &ScalarOp::Neg);
 }
 
 #[test]
@@ -244,29 +234,20 @@ fn backward_dag_accumulates_x_squared_gradient() {
     let x_grad_key = GlobalValKey::Input(sk("x"));
     let x_left_key = GlobalValKey::Input(sk("x_left"));
     let x_right_key = GlobalValKey::Input(sk("x_right"));
-    let node = Arc::new(GradNode {
-        op: ScalarOp::Mul,
-        primal_in_keys: vec![x_left_key.clone(), x_right_key.clone()],
-        primal_out_keys: vec![y_key.clone()],
-        saved_data: HashMap::from([
+    let node = Arc::new(GradNode::new(
+        ScalarOp::Mul,
+        vec![x_left_key.clone(), x_right_key.clone()],
+        vec![y_key.clone()],
+        HashMap::from([
             (x_left_key.clone(), arc(3.0)),
             (x_right_key.clone(), arc(3.0)),
             (y_key.clone(), arc(9.0)),
         ]),
-        input_edges: vec![
-            GradEdge {
-                node: None,
-                key: x_grad_key.clone(),
-                requires_grad: true,
-            },
-            GradEdge {
-                node: None,
-                key: x_grad_key.clone(),
-                requires_grad: true,
-            },
+        vec![
+            GradEdge::new(None, x_grad_key.clone(), true),
+            GradEdge::new(None, x_grad_key.clone(), true),
         ],
-        output_idx: 0,
-    });
+    ));
 
     let sorted = topo_sort_grad_dag(&Some(node));
     let mut callbacks = ScalarBackwardCallbacks;

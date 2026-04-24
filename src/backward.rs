@@ -49,7 +49,7 @@ pub fn topo_sort_grad_dag<Op: GraphOp>(
             return;
         }
 
-        for edge in &node.input_edges {
+        for edge in node.input_edges() {
             if let Some(parent) = &edge.node {
                 visit(parent, visited, order);
             }
@@ -82,7 +82,7 @@ where
 
     for node in sorted_nodes.iter().rev() {
         let cotangent_out: Vec<Option<Arc<Op::Operand>>> = node
-            .primal_out_keys
+            .primal_out_keys()
             .iter()
             .map(|key| cotangents.get(key).cloned())
             .collect();
@@ -91,10 +91,10 @@ where
         }
 
         let linear = build_single_op_linear(node, ctx);
-        let all_values = callbacks.execute_forward(&linear.fragment, &node.saved_data);
+        let all_values = callbacks.execute_forward(&linear.fragment, node.saved_data());
         let cotangent_in = callbacks.eager_transpose(&linear, &cotangent_out, &all_values, ctx);
 
-        for (edge, maybe_cotangent) in node.input_edges.iter().zip(cotangent_in.into_iter()) {
+        for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in.into_iter()) {
             let Some(cotangent) = maybe_cotangent else {
                 continue;
             };
@@ -123,22 +123,20 @@ where
     let mut builder = FragmentBuilder::new();
 
     let input_local_ids: Vec<_> = node
-        .primal_in_keys
+        .primal_in_keys()
         .iter()
         .map(|key| match key {
             GlobalValKey::Input(input_key) => builder.add_input(input_key.clone()),
             GlobalValKey::Derived { .. } => {
-                // The current eager integration requires per-input primal keys to
-                // already be represented as `GlobalValKey::Input`. If a caller
-                // wants to route gradients through a derived eager value, it must
-                // first materialize a stable input key for that value.
-                todo!("build_single_op_linear requires GlobalValKey::Input for node.primal_in_keys")
+                panic!(
+                    "build_single_op_linear requires GlobalValKey::Input aliases in node.primal_in_keys"
+                )
             }
         })
         .collect();
 
     let outputs = builder.add_op(
-        node.op.clone(),
+        node.op().clone(),
         input_local_ids
             .iter()
             .map(|local_id| ValRef::Local(*local_id))
@@ -154,12 +152,14 @@ where
         .map(|output_id| fragment.vals()[*output_id].key.clone())
         .collect();
     let wrt_keys: Vec<_> = node
-        .primal_in_keys
+        .primal_in_keys()
         .iter()
         .map(|key| match key {
             GlobalValKey::Input(input_key) => input_key.clone(),
             GlobalValKey::Derived { .. } => {
-                todo!("build_single_op_linear requires GlobalValKey::Input for node.primal_in_keys")
+                panic!(
+                    "build_single_op_linear requires GlobalValKey::Input aliases in node.primal_in_keys"
+                )
             }
         })
         .collect();

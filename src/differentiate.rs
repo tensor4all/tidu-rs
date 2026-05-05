@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
+use chainrules::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::{ResolvedView, ValDef};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
@@ -11,19 +11,20 @@ use crate::LinearFragment;
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
-/// [`chainrules::PrimitiveOp::linearize`].
+/// [`chainrules::PrimitiveOp::try_linearize`].
 ///
 /// # Examples
 ///
 /// ```ignore
 /// use computegraph::resolve::resolve;
-/// use tidu::differentiate;
+/// use tidu::try_differentiate;
 ///
 /// let view = resolve(vec![primal_fragment]);
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
-/// let linear = differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases);
+/// let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
 /// assert_eq!(linear.tangent_outputs.len(), 1);
+/// # Ok::<(), chainrules::ADRuleError>(())
 /// ```
 pub fn differentiate<Op: PrimitiveOp>(
     view: &ResolvedView<Op>,
@@ -33,6 +34,28 @@ pub fn differentiate<Op: PrimitiveOp>(
     ctx: &mut Op::ADContext,
     aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
 ) -> LinearFragment<Op>
+where
+    Op::InputKey: ADKey,
+{
+    match try_differentiate(view, outputs, wrt, pass, ctx, aliases) {
+        Ok(linear) => linear,
+        Err(err) => panic!("{err}"),
+    }
+}
+
+/// Fallible form of [`differentiate`].
+///
+/// This returns [`chainrules::ADRuleError`] when a primitive cannot emit a JVP
+/// rule, allowing downstream frontends to surface missing extension rules as
+/// normal errors instead of panics.
+pub fn try_differentiate<Op: PrimitiveOp>(
+    view: &ResolvedView<Op>,
+    outputs: &[GlobalValKey<Op>],
+    wrt: &[Op::InputKey],
+    pass: DiffPassId,
+    ctx: &mut Op::ADContext,
+    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
+) -> ADRuleResult<LinearFragment<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -96,7 +119,7 @@ where
                 }
 
                 let tangent_out =
-                    op.linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx);
+                    op.try_linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx)?;
                 assert_eq!(
                     tangent_out.len(),
                     output_keys.len(),
@@ -124,11 +147,11 @@ where
         builder.set_outputs(active_outputs);
     }
 
-    LinearFragment {
+    Ok(LinearFragment {
         fragment: builder.build(),
         tangent_inputs,
         tangent_outputs,
-    }
+    })
 }
 
 fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<GlobalValKey<Op>> {

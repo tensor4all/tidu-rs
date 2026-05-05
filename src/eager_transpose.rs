@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chainrules::PrimitiveOp;
+use chainrules::{ADRuleResult, PrimitiveOp};
 use computegraph::{GlobalValKey, LocalValId, OpEmitter, OpMode, ValRef};
 
 use crate::LinearFragment;
@@ -15,6 +15,22 @@ pub fn eager_transpose_fragment<Op: PrimitiveOp>(
     cotangent_seeds: &[Option<LocalValId>],
     ctx: &mut Op::ADContext,
 ) -> Vec<Option<LocalValId>>
+where
+    Op::InputKey: chainrules::ADKey,
+{
+    match try_eager_transpose_fragment(linear, emitter, cotangent_seeds, ctx) {
+        Ok(cotangents) => cotangents,
+        Err(err) => panic!("{err}"),
+    }
+}
+
+/// Fallible form of [`eager_transpose_fragment`].
+pub fn try_eager_transpose_fragment<Op: PrimitiveOp>(
+    linear: &LinearFragment<Op>,
+    emitter: &mut impl OpEmitter<Op>,
+    cotangent_seeds: &[Option<LocalValId>],
+    ctx: &mut Op::ADContext,
+) -> ADRuleResult<Vec<Option<LocalValId>>>
 where
     Op::InputKey: chainrules::ADKey,
 {
@@ -54,10 +70,13 @@ where
             })
             .collect();
 
-        let cotangent_in =
-            op_node
-                .op
-                .transpose_rule(emitter, &cotangent_out, &rule_inputs, &op_node.mode, ctx);
+        let cotangent_in = op_node.op.try_transpose_rule(
+            emitter,
+            &cotangent_out,
+            &rule_inputs,
+            &op_node.mode,
+            ctx,
+        )?;
         assert_eq!(
             cotangent_in.len(),
             rule_inputs.len(),
@@ -94,12 +113,12 @@ where
         }
     }
 
-    linear
+    Ok(linear
         .tangent_inputs
         .iter()
         .map(|(_, tangent_input_id)| {
             let tangent_input_key = &linear.fragment.vals()[*tangent_input_id].key;
             cotangent_env.get(tangent_input_key).copied()
         })
-        .collect()
+        .collect())
 }

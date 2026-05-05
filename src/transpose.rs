@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chainrules::{ADKey, PrimitiveOp};
+use chainrules::{ADKey, ADRuleResult, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
@@ -22,6 +22,23 @@ pub fn transpose<Op: PrimitiveOp>(
     linear: &LinearFragment<Op>,
     ctx: &mut Op::ADContext,
 ) -> LinearFragment<Op>
+where
+    Op::InputKey: ADKey,
+{
+    match try_transpose(linear, ctx) {
+        Ok(transposed) => transposed,
+        Err(err) => panic!("{err}"),
+    }
+}
+
+/// Fallible form of [`transpose`].
+///
+/// This returns [`chainrules::ADRuleError`] when a primitive cannot emit a
+/// transpose rule.
+pub fn try_transpose<Op: PrimitiveOp>(
+    linear: &LinearFragment<Op>,
+    ctx: &mut Op::ADContext,
+) -> ADRuleResult<LinearFragment<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -66,13 +83,13 @@ where
             })
             .collect();
 
-        let cotangent_in = op_node.op.transpose_rule(
+        let cotangent_in = op_node.op.try_transpose_rule(
             &mut builder,
             &cotangent_out,
             &rule_inputs,
             &op_node.mode,
             ctx,
-        );
+        )?;
         assert_eq!(
             cotangent_in.len(),
             rule_inputs.len(),
@@ -122,11 +139,11 @@ where
         builder.set_outputs(active_outputs);
     }
 
-    LinearFragment {
+    Ok(LinearFragment {
         fragment: builder.build(),
         tangent_inputs: cotangent_seed_inputs,
         tangent_outputs,
-    }
+    })
 }
 
 fn cotangent_seed_key<Op: PrimitiveOp>(linear: &LinearFragment<Op>, index: usize) -> Op::InputKey

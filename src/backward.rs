@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chainrules::{ADKey, PrimitiveOp};
+use chainrules::{ADKey, ADRuleResult, PrimitiveOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
@@ -30,6 +30,21 @@ where
         external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
         ctx: &mut Op::ADContext,
     ) -> Vec<Option<Arc<Op::Operand>>>;
+
+    /// Fallible eager transpose hook.
+    ///
+    /// Frontends that execute extension rules should override this method so
+    /// missing AD rules can propagate out of [`try_backward_dag`]. The default
+    /// implementation preserves the existing infallible callback contract.
+    fn try_eager_transpose(
+        &mut self,
+        linear: &LinearFragment<Op>,
+        cotangent_out: &[Option<Arc<Op::Operand>>],
+        external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
+        ctx: &mut Op::ADContext,
+    ) -> ADRuleResult<Vec<Option<Arc<Op::Operand>>>> {
+        Ok(self.eager_transpose(linear, cotangent_out, external_data, ctx))
+    }
 
     /// Add two concrete operands for cotangent accumulation.
     fn add_operands(&mut self, a: &Arc<Op::Operand>, b: &Arc<Op::Operand>) -> Arc<Op::Operand>;
@@ -77,6 +92,23 @@ pub fn backward_dag<Op: PrimitiveOp>(
 where
     Op::InputKey: ADKey,
 {
+    match try_backward_dag(sorted_nodes, output_key, seed, callbacks, ctx) {
+        Ok(cotangents) => cotangents,
+        Err(err) => panic!("{err}"),
+    }
+}
+
+/// Fallible form of [`backward_dag`].
+pub fn try_backward_dag<Op: PrimitiveOp>(
+    sorted_nodes: &[Arc<GradNode<Op>>],
+    output_key: &GlobalValKey<Op>,
+    seed: Arc<Op::Operand>,
+    callbacks: &mut impl BackwardCallbacks<Op>,
+    ctx: &mut Op::ADContext,
+) -> ADRuleResult<HashMap<GlobalValKey<Op>, Arc<Op::Operand>>>
+where
+    Op::InputKey: ADKey,
+{
     let mut cotangents: HashMap<GlobalValKey<Op>, Arc<Op::Operand>> = HashMap::new();
     cotangents.insert(output_key.clone(), seed);
 
@@ -90,9 +122,10 @@ where
             continue;
         }
 
-        let linear = build_single_op_linear(node, ctx);
+        let linear = try_build_single_op_linear(node, ctx)?;
         let all_values = callbacks.execute_forward(&linear.fragment, node.saved_data());
-        let cotangent_in = callbacks.eager_transpose(&linear, &cotangent_out, &all_values, ctx);
+        let cotangent_in =
+            callbacks.try_eager_transpose(&linear, &cotangent_out, &all_values, ctx)?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in.into_iter()) {
             let Some(cotangent) = maybe_cotangent else {
@@ -110,13 +143,13 @@ where
         }
     }
 
-    cotangents
+    Ok(cotangents)
 }
 
-fn build_single_op_linear<Op: PrimitiveOp>(
+fn try_build_single_op_linear<Op: PrimitiveOp>(
     node: &GradNode<Op>,
     ctx: &mut Op::ADContext,
-) -> LinearFragment<Op>
+) -> ADRuleResult<LinearFragment<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -165,5 +198,5 @@ where
         .collect();
     let aliases = HashMap::new();
 
-    crate::differentiate(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
+    crate::try_differentiate(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 }

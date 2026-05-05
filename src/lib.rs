@@ -3,6 +3,9 @@
 //! This crate provides two graph-to-graph transforms:
 //! [`differentiate`] for forward linearization (JVP) and [`transpose`] for
 //! reverse linear flow over a linear fragment.
+//! Fallible variants (`try_differentiate`, `try_transpose`, and
+//! `try_backward_dag`) propagate [`chainrules::ADRuleError`] for missing
+//! primitive or extension AD rules.
 //! It also provides eager reverse-mode AD helpers: [`record_eager_op`] builds
 //! [`GradNode`] metadata around concrete frontend execution, and
 //! [`backward_dag`] replays recorded nodes through caller-provided
@@ -12,12 +15,14 @@
 //!
 //! ```ignore
 //! use computegraph::resolve::resolve;
-//! use tidu::{differentiate, transpose};
+//! use tidu::{try_differentiate, try_transpose};
 //!
 //! let view = resolve(vec![primal_fragment]);
 //! let mut ctx = ();
-//! let linear = differentiate(&view, &[output_key], &[input_key], 1, &mut ctx);
-//! let _transposed = transpose(&linear, &mut ctx);
+//! let aliases = std::collections::HashMap::new();
+//! let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+//! let _transposed = try_transpose(&linear, &mut ctx)?;
+//! # Ok::<(), chainrules::ADRuleError>(())
 //! ```
 
 pub mod backward;
@@ -28,13 +33,13 @@ pub mod grad_node;
 mod linear_fragment;
 mod transpose;
 
-pub use backward::{backward_dag, topo_sort_grad_dag, BackwardCallbacks};
-pub use differentiate::differentiate;
+pub use backward::{backward_dag, topo_sort_grad_dag, try_backward_dag, BackwardCallbacks};
+pub use differentiate::{differentiate, try_differentiate};
 pub use eager_record::{
     derived_output_key, record_eager_op, saved_forward_values, EagerKeySource, EagerOutput,
     EagerValue,
 };
-pub use eager_transpose::eager_transpose_fragment;
+pub use eager_transpose::{eager_transpose_fragment, try_eager_transpose_fragment};
 pub use grad_node::{GradEdge, GradNode};
 pub use linear_fragment::LinearFragment;
-pub use transpose::transpose;
+pub use transpose::{transpose, try_transpose};

@@ -3,9 +3,12 @@
 AD graph transforms for the tensor4all v2 stack.
 
 Provides:
-- `differentiate` — JVP transform (resolved view → linear fragment)
-- `transpose` — reverse linear flow (linear fragment → linear fragment)
+- `differentiate` / `try_differentiate` — JVP transform (resolved view → linear fragment)
+- `transpose` / `try_transpose` — reverse linear flow (linear fragment → linear fragment)
 - eager reverse-mode AD helpers around `GradNode` / `backward_dag`
+
+Use the `try_*` APIs when downstream primitive sets can report unsupported
+extension AD rules through `chainrules::ADRuleError`.
 
 Fully generic over `Op: PrimitiveOp`. References no specific primitives.
 

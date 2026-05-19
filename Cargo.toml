@@ -8,8 +8,8 @@ publish = false
 [workspace]
 
 [dependencies]
-computegraph = { git = "https://github.com/tensor4all/computegraph-rs.git", rev = "8306196" }
-chainrules = { git = "https://github.com/tensor4all/chainrules-rs.git", rev = "da3f2b50ba2e6a0738737e4e4b2ec8f5c8243469" }
+computegraph = { git = "https://github.com/tensor4all/computegraph-rs.git", rev = "c20e8912560ef11166418bcea089126ef50443cc" }
+chainrules = { git = "https://github.com/tensor4all/chainrules-rs.git", rev = "2d7662140d92f0dd73b2402aefc2272feafc9270" }
 
 [dev-dependencies]
 ndarray = "0.16"

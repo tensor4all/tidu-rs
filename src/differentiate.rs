@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chainrules::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
@@ -96,11 +97,7 @@ where
                 mode,
                 ..
             } => {
-                let global_op_key = GlobalOpKey {
-                    primitive: op.clone(),
-                    inputs: input_keys.clone(),
-                    mode: mode.clone(),
-                };
+                let global_op_key = GlobalOpKey::new(op.clone(), input_keys.clone(), mode.clone());
                 if !processed_ops.insert(global_op_key.clone()) {
                     continue;
                 }
@@ -155,9 +152,10 @@ where
 }
 
 fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<GlobalValKey<Op>> {
+    let op_key = Arc::new(op_key.clone());
     (0..n_outputs)
         .map(|output_slot| GlobalValKey::Derived {
-            op: op_key.clone(),
+            op: Arc::clone(&op_key),
             output_slot: output_slot as u8,
         })
         .collect()

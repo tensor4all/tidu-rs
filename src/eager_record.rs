@@ -175,11 +175,11 @@ pub fn derived_output_key<Op: GraphOp>(
     );
 
     GlobalValKey::Derived {
-        op: GlobalOpKey {
-            primitive: op.clone(),
-            inputs: input_aliases.to_vec(),
-            mode: OpMode::Primal,
-        },
+        op: Arc::new(GlobalOpKey::new(
+            op.clone(),
+            input_aliases.to_vec(),
+            OpMode::Primal,
+        )),
         output_slot: output_slot as u8,
     }
 }

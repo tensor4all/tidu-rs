@@ -122,10 +122,19 @@ where
             continue;
         }
 
-        let linear = try_build_single_op_linear(node, ctx)?;
+        let mut active_output_slots = Vec::new();
+        let mut active_cotangent_out = Vec::new();
+        for (slot, maybe_cotangent) in cotangent_out.into_iter().enumerate() {
+            if let Some(cotangent) = maybe_cotangent {
+                active_output_slots.push(slot);
+                active_cotangent_out.push(Some(cotangent));
+            }
+        }
+
+        let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
         let all_values = callbacks.execute_forward(&linear.fragment, node.saved_data());
         let cotangent_in =
-            callbacks.try_eager_transpose(&linear, &cotangent_out, &all_values, ctx)?;
+            callbacks.try_eager_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in.into_iter()) {
             let Some(cotangent) = maybe_cotangent else {
@@ -148,6 +157,7 @@ where
 
 fn try_build_single_op_linear<Op: PrimitiveOp>(
     node: &GradNode<Op>,
+    output_slots: &[usize],
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<LinearFragment<Op>>
 where
@@ -176,11 +186,24 @@ where
             .collect(),
         OpMode::Primal,
     );
-    builder.set_outputs(outputs.clone());
+    let selected_outputs: Vec<_> = output_slots
+        .iter()
+        .map(|&slot| {
+            *outputs.get(slot).unwrap_or_else(|| {
+                panic!(
+                    "build_single_op_linear got output slot {slot} for {:?}, \
+                     which has only {} outputs",
+                    node.op(),
+                    outputs.len()
+                )
+            })
+        })
+        .collect();
+    builder.set_outputs(selected_outputs.clone());
 
     let fragment = Arc::new(builder.build());
     let view = resolve(vec![fragment.clone()]);
-    let output_keys: Vec<_> = outputs
+    let output_keys: Vec<_> = selected_outputs
         .iter()
         .map(|output_id| fragment.vals()[*output_id].key.clone())
         .collect();

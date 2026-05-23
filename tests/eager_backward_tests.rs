@@ -22,6 +22,187 @@ fn arc(value: f64) -> Arc<f64> {
     Arc::new(value)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum TwoOutputOp {
+    Add,
+    Split,
+}
+
+impl computegraph::GraphOp for TwoOutputOp {
+    type Operand = f64;
+    type Context = ();
+    type InputKey = ScalarKey;
+
+    fn n_inputs(&self) -> usize {
+        match self {
+            Self::Add => 2,
+            Self::Split => 1,
+        }
+    }
+
+    fn n_outputs(&self) -> usize {
+        match self {
+            Self::Add => 1,
+            Self::Split => 2,
+        }
+    }
+}
+
+impl EvalGraphOp for TwoOutputOp {
+    fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
+        match self {
+            Self::Add => vec![inputs[0] + inputs[1]],
+            Self::Split => vec![*inputs[0], 2.0 * *inputs[0]],
+        }
+    }
+}
+
+impl chainrules::PrimitiveOp for TwoOutputOp {
+    type ADContext = ();
+
+    fn add() -> Self {
+        Self::Add
+    }
+
+    fn linearize(
+        &self,
+        builder: &mut FragmentBuilder<Self>,
+        _primal_in: &[GlobalValKey<Self>],
+        _primal_out: &[GlobalValKey<Self>],
+        tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
+    ) -> Vec<Option<LocalValId>> {
+        match self {
+            Self::Add => match (tangent_in[0], tangent_in[1]) {
+                (Some(lhs), Some(rhs)) => {
+                    let sum = builder.add_op(
+                        Self::Add,
+                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
+                        OpMode::Linear {
+                            active_mask: vec![true, true],
+                        },
+                    )[0];
+                    vec![Some(sum)]
+                }
+                (Some(lhs), None) => vec![Some(lhs)],
+                (None, Some(rhs)) => vec![Some(rhs)],
+                (None, None) => vec![None],
+            },
+            Self::Split => {
+                let Some(dx) = tangent_in[0] else {
+                    return vec![None, None];
+                };
+                let doubled = builder.add_op(
+                    Self::Add,
+                    vec![ValRef::Local(dx), ValRef::Local(dx)],
+                    OpMode::Linear {
+                        active_mask: vec![true, true],
+                    },
+                )[0];
+                vec![Some(dx), Some(doubled)]
+            }
+        }
+    }
+
+    fn transpose_rule(
+        &self,
+        _builder: &mut impl OpEmitter<Self>,
+        cotangent_out: &[Option<LocalValId>],
+        _inputs: &[ValRef<Self>],
+        _mode: &OpMode,
+        _ctx: &mut (),
+    ) -> Vec<Option<LocalValId>> {
+        match self {
+            Self::Add => vec![cotangent_out[0], cotangent_out[0]],
+            Self::Split => panic!("Split should be linearized before transpose"),
+        }
+    }
+}
+
+struct TwoOutputEmitter {
+    locals: Vec<Arc<f64>>,
+}
+
+impl TwoOutputEmitter {
+    fn push_value(&mut self, value: Arc<f64>) -> LocalValId {
+        let id = self.locals.len();
+        self.locals.push(value);
+        id
+    }
+
+    fn value(&self, id: LocalValId) -> Arc<f64> {
+        self.locals[id].clone()
+    }
+}
+
+impl OpEmitter<TwoOutputOp> for TwoOutputEmitter {
+    fn add_op(
+        &mut self,
+        op: TwoOutputOp,
+        inputs: Vec<ValRef<TwoOutputOp>>,
+        _mode: OpMode,
+    ) -> Vec<LocalValId> {
+        let values: Vec<Arc<f64>> = inputs
+            .iter()
+            .map(|input| match input {
+                ValRef::Local(local_id) => self.value(*local_id),
+                ValRef::External(key) => {
+                    panic!("unexpected external input in two-output test: {key:?}")
+                }
+            })
+            .collect();
+        let refs: Vec<&f64> = values.iter().map(|value| value.as_ref()).collect();
+        let outputs = op.eval(&mut (), &refs);
+        let start = self.locals.len();
+        self.locals.extend(outputs.into_iter().map(Arc::new));
+        (start..self.locals.len()).collect()
+    }
+}
+
+struct PartialOutputCallbacks {
+    observed_fragment_outputs: usize,
+    observed_seed_slots: usize,
+}
+
+impl BackwardCallbacks<TwoOutputOp> for PartialOutputCallbacks {
+    fn execute_forward(
+        &mut self,
+        fragment: &Fragment<TwoOutputOp>,
+        initial_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
+    ) -> HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>> {
+        self.observed_fragment_outputs = fragment.outputs().len();
+        initial_data.clone()
+    }
+
+    fn eager_transpose(
+        &mut self,
+        linear: &tidu::LinearFragment<TwoOutputOp>,
+        cotangent_out: &[Option<Arc<f64>>],
+        _external_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
+        ctx: &mut <TwoOutputOp as chainrules::PrimitiveOp>::ADContext,
+    ) -> Vec<Option<Arc<f64>>> {
+        self.observed_seed_slots = cotangent_out.len();
+        let mut emitter = TwoOutputEmitter { locals: Vec::new() };
+        let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
+            .iter()
+            .map(|maybe_seed| {
+                maybe_seed
+                    .as_ref()
+                    .map(|seed| emitter.push_value(seed.clone()))
+            })
+            .collect();
+
+        eager_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx)
+            .into_iter()
+            .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+            .collect()
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        Arc::new(**a + **b)
+    }
+}
+
 struct ScalarEagerEmitter {
     locals: Vec<Arc<f64>>,
     external_data: HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
@@ -254,6 +435,36 @@ fn backward_dag_accumulates_x_squared_gradient() {
     let cotangents = backward_dag(&sorted, &y_key, arc(1.0), &mut callbacks, &mut ());
 
     assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
+}
+
+#[test]
+fn backward_dag_linearizes_only_seeded_multi_output_slots() {
+    let input_key = GlobalValKey::Input(sk("x"));
+    let out0_key = GlobalValKey::Input(sk("out0"));
+    let out1_key = GlobalValKey::Input(sk("out1"));
+    let grad_key = GlobalValKey::Input(sk("grad_x"));
+    let node = Arc::new(GradNode::new(
+        TwoOutputOp::Split,
+        vec![input_key.clone()],
+        vec![out0_key, out1_key.clone()],
+        HashMap::from([
+            (input_key, arc(3.0)),
+            (GlobalValKey::Input(sk("out0")), arc(3.0)),
+            (GlobalValKey::Input(sk("out1")), arc(6.0)),
+        ]),
+        vec![GradEdge::new(None, grad_key.clone(), true)],
+    ));
+    let sorted = topo_sort_grad_dag(&Some(node));
+    let mut callbacks = PartialOutputCallbacks {
+        observed_fragment_outputs: 0,
+        observed_seed_slots: 0,
+    };
+
+    let cotangents = backward_dag(&sorted, &out1_key, arc(1.0), &mut callbacks, &mut ());
+
+    assert_eq!(callbacks.observed_fragment_outputs, 1);
+    assert_eq!(callbacks.observed_seed_slots, 1);
+    assert_eq!(**cotangents.get(&grad_key).expect("gradient for x"), 2.0);
 }
 
 /// Fan-out test: f(x) = x + x, df/dx = 2.

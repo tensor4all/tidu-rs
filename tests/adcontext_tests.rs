@@ -4,11 +4,11 @@ mod common;
 
 use std::sync::Arc;
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{GraphOp, OpEmitter};
+use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 define_ad_key!(CtxKey);
 

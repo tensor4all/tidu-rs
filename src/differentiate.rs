@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chainrules::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
+use crate::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::{ResolvedView, ValDef};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
@@ -12,7 +12,7 @@ use crate::LinearFragment;
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
-/// [`chainrules::PrimitiveOp::try_linearize`].
+/// [`crate::PrimitiveOp::try_linearize`].
 ///
 /// # Examples
 ///
@@ -25,7 +25,7 @@ use crate::LinearFragment;
 /// let aliases = std::collections::HashMap::new();
 /// let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
 /// assert_eq!(linear.tangent_outputs.len(), 1);
-/// # Ok::<(), chainrules::ADRuleError>(())
+/// # Ok::<(), crate::ADRuleError>(())
 /// ```
 pub fn differentiate<Op: PrimitiveOp>(
     view: &ResolvedView<Op>,
@@ -46,7 +46,7 @@ where
 
 /// Fallible form of [`differentiate`].
 ///
-/// This returns [`chainrules::ADRuleError`] when a primitive cannot emit a JVP
+/// This returns [`crate::ADRuleError`] when a primitive cannot emit a JVP
 /// rule, allowing downstream frontends to surface missing extension rules as
 /// normal errors instead of panics.
 pub fn try_differentiate<Op: PrimitiveOp>(

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chainrules::{ADKey, ADRuleResult, PrimitiveOp};
+use crate::{ADKey, ADRuleResult, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
@@ -8,7 +8,7 @@ use crate::LinearFragment;
 
 /// Transpose a linear fragment, reversing linear flow.
 ///
-/// Fan-out accumulation is emitted explicitly with [`chainrules::PrimitiveOp::add`];
+/// Fan-out accumulation is emitted explicitly with [`crate::PrimitiveOp::add`];
 /// no duplication primitive is assumed by the graph transform.
 ///
 /// # Examples
@@ -33,7 +33,7 @@ where
 
 /// Fallible form of [`transpose`].
 ///
-/// This returns [`chainrules::ADRuleError`] when a primitive cannot emit a
+/// This returns [`crate::ADRuleError`] when a primitive cannot emit a
 /// transpose rule.
 pub fn try_transpose<Op: PrimitiveOp>(
     linear: &LinearFragment<Op>,

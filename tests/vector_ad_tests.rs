@@ -3,7 +3,6 @@ mod common;
 
 use std::sync::Arc;
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use common::assertions::assert_tensor_approx_eq;
 use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
@@ -12,6 +11,7 @@ use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
 use ndarray::{ArrayD, Axis, IxDyn};
 use tidu::{differentiate, transpose};
+use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;

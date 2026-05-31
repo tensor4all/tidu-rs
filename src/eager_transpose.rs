@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chainrules::{ADRuleResult, PrimitiveOp};
+use crate::{ADRuleResult, PrimitiveOp};
 use computegraph::{GlobalValKey, LocalValId, OpEmitter, OpMode, ValRef};
 
 use crate::LinearFragment;
@@ -16,7 +16,7 @@ pub fn eager_transpose_fragment<Op: PrimitiveOp>(
     ctx: &mut Op::ADContext,
 ) -> Vec<Option<LocalValId>>
 where
-    Op::InputKey: chainrules::ADKey,
+    Op::InputKey: crate::ADKey,
 {
     match try_eager_transpose_fragment(linear, emitter, cotangent_seeds, ctx) {
         Ok(cotangents) => cotangents,
@@ -32,7 +32,7 @@ pub fn try_eager_transpose_fragment<Op: PrimitiveOp>(
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<Vec<Option<LocalValId>>>
 where
-    Op::InputKey: chainrules::ADKey,
+    Op::InputKey: crate::ADKey,
 {
     let mut cotangent_env: HashMap<GlobalValKey<Op>, LocalValId> = HashMap::new();
 

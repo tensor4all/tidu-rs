@@ -3,7 +3,6 @@ mod common;
 
 use std::sync::Arc;
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use common::assertions::{
     assert_complex_approx_eq, assert_scalar_approx_eq, assert_tensor_approx_eq,
 };
@@ -15,6 +14,7 @@ use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
+use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 const TOL: f64 = 1e-10;
 

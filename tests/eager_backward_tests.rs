@@ -57,7 +57,7 @@ impl EvalGraphOp for TwoOutputOp {
     }
 }
 
-impl chainrules::PrimitiveOp for TwoOutputOp {
+impl tidu::PrimitiveOp for TwoOutputOp {
     type ADContext = ();
 
     fn add() -> Self {
@@ -179,7 +179,7 @@ impl BackwardCallbacks<TwoOutputOp> for PartialOutputCallbacks {
         linear: &tidu::LinearFragment<TwoOutputOp>,
         cotangent_out: &[Option<Arc<f64>>],
         _external_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
-        ctx: &mut <TwoOutputOp as chainrules::PrimitiveOp>::ADContext,
+        ctx: &mut <TwoOutputOp as tidu::PrimitiveOp>::ADContext,
     ) -> Vec<Option<Arc<f64>>> {
         self.observed_seed_slots = cotangent_out.len();
         let mut emitter = TwoOutputEmitter { locals: Vec::new() };
@@ -312,7 +312,7 @@ impl BackwardCallbacks<ScalarOp> for ScalarBackwardCallbacks {
         linear: &tidu::LinearFragment<ScalarOp>,
         cotangent_out: &[Option<Arc<f64>>],
         external_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
-        ctx: &mut <ScalarOp as chainrules::PrimitiveOp>::ADContext,
+        ctx: &mut <ScalarOp as tidu::PrimitiveOp>::ADContext,
     ) -> Vec<Option<Arc<f64>>> {
         let mut emitter = ScalarEagerEmitter::new(external_data.clone());
         let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out

@@ -87,6 +87,7 @@ impl ADRuleError {
     /// let err = ADRuleError::unsupported("custom::op", ADRuleKind::Linearize);
     /// assert_eq!(err.rule(), ADRuleKind::Linearize);
     /// ```
+    #[cfg_attr(coverage, inline(never))]
     pub const fn rule(&self) -> ADRuleKind {
         match self {
             Self::Unsupported { rule, .. } => *rule,

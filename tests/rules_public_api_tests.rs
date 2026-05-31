@@ -1,5 +1,6 @@
 use computegraph::fragment::FragmentBuilder;
 use computegraph::{GlobalValKey, GraphOp, LocalValId, OpEmitter, OpMode, ValRef};
+use std::hint::black_box;
 use tidu::rules::{
     ADKey as ModuleADKey, ADRuleError as ModuleADRuleError, ADRuleKind as ModuleADRuleKind,
     ADRuleResult as ModuleADRuleResult, DiffPassId as ModuleDiffPassId,
@@ -93,10 +94,22 @@ fn root_reexports_match_rules_module_contract() {
         ModuleADRuleKind::Linearize.as_str(),
         ADRuleKind::Linearize.as_str()
     );
+    assert_eq!(ModuleADRuleKind::Transpose.as_str(), "transpose");
 
-    let err: ADRuleError = ModuleADRuleError::unsupported("test::op", ModuleADRuleKind::Transpose);
+    let err: ADRuleError = ModuleADRuleError::unsupported("test::op", ModuleADRuleKind::Linearize);
     assert_eq!(
-        assert_result::<()>(Err(err)).unwrap_err().rule(),
-        ADRuleKind::Transpose
+        err.to_string(),
+        "unsupported linearize AD rule for test::op"
+    );
+    assert!(std::error::Error::source(&err).is_none());
+    let rule_fn: fn(&ADRuleError) -> ADRuleKind = ADRuleError::rule;
+    let runtime_err = black_box(assert_result::<()>(Err(err)).unwrap_err());
+    assert_eq!(rule_fn(&runtime_err), ADRuleKind::Linearize);
+
+    let transpose_err =
+        ModuleADRuleError::unsupported("test::transpose", ModuleADRuleKind::Transpose);
+    assert_eq!(
+        transpose_err.to_string(),
+        "unsupported transpose AD rule for test::transpose"
     );
 }

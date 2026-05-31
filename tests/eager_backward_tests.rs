@@ -9,10 +9,8 @@ use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, OpEmitter};
-use tidu::{
-    backward_dag, differentiate, eager_transpose_fragment, topo_sort_grad_dag, BackwardCallbacks,
-    GradEdge, GradNode,
-};
+use tidu::eager::{self, BackwardExecutor, Input, KeySource, Recorder};
+use tidu::{differentiate, emit};
 
 fn sk(name: &str) -> ScalarKey {
     ScalarKey::User(name.to_string())
@@ -159,12 +157,59 @@ impl OpEmitter<TwoOutputOp> for TwoOutputEmitter {
     }
 }
 
+#[derive(Default)]
+struct TestKeySource {
+    next: usize,
+}
+
+impl TestKeySource {
+    fn next_key(&mut self) -> ScalarKey {
+        let key = ScalarKey::User(format!("e{}", self.next));
+        self.next += 1;
+        key
+    }
+}
+
+impl KeySource<ScalarOp> for TestKeySource {
+    fn fresh_input_key(&mut self) -> ScalarKey {
+        self.next_key()
+    }
+}
+
+impl KeySource<TwoOutputOp> for TestKeySource {
+    fn fresh_input_key(&mut self) -> ScalarKey {
+        self.next_key()
+    }
+}
+
+fn scalar_input(name: &str, value: f64, requires_grad: bool) -> Input<ScalarOp> {
+    Input {
+        key: GlobalValKey::Input(sk(name)),
+        trace: None,
+        requires_grad,
+        data: arc(value),
+    }
+}
+
+fn scalar_input_from_output(
+    output: &tidu::eager::Output<ScalarOp>,
+    value: f64,
+    requires_grad: bool,
+) -> Input<ScalarOp> {
+    Input {
+        key: output.key.clone(),
+        trace: output.trace.clone(),
+        requires_grad,
+        data: arc(value),
+    }
+}
+
 struct PartialOutputCallbacks {
     observed_fragment_outputs: usize,
     observed_seed_slots: usize,
 }
 
-impl BackwardCallbacks<TwoOutputOp> for PartialOutputCallbacks {
+impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
     fn execute_forward(
         &mut self,
         fragment: &Fragment<TwoOutputOp>,
@@ -174,13 +219,13 @@ impl BackwardCallbacks<TwoOutputOp> for PartialOutputCallbacks {
         initial_data.clone()
     }
 
-    fn eager_transpose(
+    fn execute_transpose(
         &mut self,
         linear: &tidu::LinearFragment<TwoOutputOp>,
         cotangent_out: &[Option<Arc<f64>>],
         _external_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
         ctx: &mut <TwoOutputOp as tidu::PrimitiveOp>::ADContext,
-    ) -> Vec<Option<Arc<f64>>> {
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         self.observed_seed_slots = cotangent_out.len();
         let mut emitter = TwoOutputEmitter { locals: Vec::new() };
         let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
@@ -192,10 +237,11 @@ impl BackwardCallbacks<TwoOutputOp> for PartialOutputCallbacks {
             })
             .collect();
 
-        eager_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx)
-            .into_iter()
-            .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
-            .collect()
+        emit::try_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx).map(|ids| {
+            ids.into_iter()
+                .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                .collect()
+        })
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -262,7 +308,7 @@ impl OpEmitter<ScalarOp> for ScalarEagerEmitter {
 
 struct ScalarBackwardCallbacks;
 
-impl BackwardCallbacks<ScalarOp> for ScalarBackwardCallbacks {
+impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
     fn execute_forward(
         &mut self,
         fragment: &Fragment<ScalarOp>,
@@ -307,13 +353,13 @@ impl BackwardCallbacks<ScalarOp> for ScalarBackwardCallbacks {
         all_values
     }
 
-    fn eager_transpose(
+    fn execute_transpose(
         &mut self,
         linear: &tidu::LinearFragment<ScalarOp>,
         cotangent_out: &[Option<Arc<f64>>],
         external_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
         ctx: &mut <ScalarOp as tidu::PrimitiveOp>::ADContext,
-    ) -> Vec<Option<Arc<f64>>> {
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         let mut emitter = ScalarEagerEmitter::new(external_data.clone());
         let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
             .iter()
@@ -324,10 +370,11 @@ impl BackwardCallbacks<ScalarOp> for ScalarBackwardCallbacks {
             })
             .collect();
 
-        eager_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx)
-            .into_iter()
-            .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
-            .collect()
+        emit::try_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx).map(|ids| {
+            ids.into_iter()
+                .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                .collect()
+        })
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -336,7 +383,7 @@ impl BackwardCallbacks<ScalarOp> for ScalarBackwardCallbacks {
 }
 
 #[test]
-fn eager_transpose_fragment_propagates_add_cotangents() {
+fn emit_try_transpose_fragment_propagates_add_cotangents() {
     let mut builder = FragmentBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
@@ -359,7 +406,8 @@ fn eager_transpose_fragment_propagates_add_cotangents() {
 
     let mut emitter = ScalarEagerEmitter::new(HashMap::new());
     let seed = emitter.push_value(arc(1.0));
-    let cotangent_inputs = eager_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ());
+    let cotangent_inputs =
+        emit::try_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
 
     let values: Vec<f64> = cotangent_inputs
         .into_iter()
@@ -370,97 +418,89 @@ fn eager_transpose_fragment_propagates_add_cotangents() {
 }
 
 #[test]
-fn topo_sort_grad_dag_orders_dependencies_before_output() {
-    let leaf = Arc::new(GradNode::new(
-        ScalarOp::Add,
-        vec![GlobalValKey::Input(sk("a")), GlobalValKey::Input(sk("b"))],
-        vec![GlobalValKey::Input(sk("leaf_out"))],
-        HashMap::new(),
-        vec![
-            GradEdge::new(None, GlobalValKey::Input(sk("a")), true),
-            GradEdge::new(None, GlobalValKey::Input(sk("b")), true),
-        ],
-    ));
-    let root = Arc::new(GradNode::new(
-        ScalarOp::Neg,
-        vec![GlobalValKey::Input(sk("leaf_out"))],
-        vec![GlobalValKey::Input(sk("root_out"))],
-        HashMap::new(),
-        vec![GradEdge::new(
-            Some(leaf.clone()),
-            GlobalValKey::Input(sk("leaf_out")),
-            true,
-        )],
-    ));
+fn try_backward_orders_dependencies_before_output() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let inputs = vec![scalar_input("a", 2.0, true), scalar_input("b", 5.0, true)];
+    let add_outputs = recorder.record(ScalarOp::Add, &inputs, &[arc(7.0)]);
+    let neg_inputs = vec![scalar_input_from_output(&add_outputs[0], 7.0, true)];
+    let neg_outputs = recorder.record(ScalarOp::Neg, &neg_inputs, &[arc(-7.0)]);
 
-    let sorted = topo_sort_grad_dag(&Some(root));
+    let mut callbacks = ScalarBackwardCallbacks;
+    let cotangents = eager::try_backward(
+        &neg_outputs[0].key,
+        neg_outputs[0].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
 
-    assert_eq!(sorted.len(), 2);
-    assert!(Arc::ptr_eq(&sorted[0], &leaf));
-    assert_eq!(sorted[1].op(), &ScalarOp::Neg);
+    assert_eq!(
+        **cotangents.get(&GlobalValKey::Input(sk("a"))).unwrap(),
+        -1.0
+    );
+    assert_eq!(
+        **cotangents.get(&GlobalValKey::Input(sk("b"))).unwrap(),
+        -1.0
+    );
 }
 
 #[test]
-fn backward_dag_accumulates_x_squared_gradient() {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
-    let x_left = builder.add_input(sk("x_left"));
-    let x_right = builder.add_input(sk("x_right"));
-    let y = builder.add_op(
-        ScalarOp::Mul,
-        vec![ValRef::Local(x_left), ValRef::Local(x_right)],
-        OpMode::Primal,
-    );
-    let y_key = builder.global_key(y[0]).clone();
-
+fn try_backward_accumulates_x_squared_gradient() {
     let x_grad_key = GlobalValKey::Input(sk("x"));
-    let x_left_key = GlobalValKey::Input(sk("x_left"));
-    let x_right_key = GlobalValKey::Input(sk("x_right"));
-    let node = Arc::new(GradNode::new(
-        ScalarOp::Mul,
-        vec![x_left_key.clone(), x_right_key.clone()],
-        vec![y_key.clone()],
-        HashMap::from([
-            (x_left_key.clone(), arc(3.0)),
-            (x_right_key.clone(), arc(3.0)),
-            (y_key.clone(), arc(9.0)),
-        ]),
-        vec![
-            GradEdge::new(None, x_grad_key.clone(), true),
-            GradEdge::new(None, x_grad_key.clone(), true),
-        ],
-    ));
-
-    let sorted = topo_sort_grad_dag(&Some(node));
+    let inputs = vec![
+        Input {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        Input {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = recorder.record(ScalarOp::Mul, &inputs, &[arc(9.0)]);
     let mut callbacks = ScalarBackwardCallbacks;
-    let cotangents = backward_dag(&sorted, &y_key, arc(1.0), &mut callbacks, &mut ());
+    let cotangents = eager::try_backward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
 
     assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
 }
 
 #[test]
-fn backward_dag_linearizes_only_seeded_multi_output_slots() {
-    let input_key = GlobalValKey::Input(sk("x"));
-    let out0_key = GlobalValKey::Input(sk("out0"));
-    let out1_key = GlobalValKey::Input(sk("out1"));
+fn try_backward_linearizes_only_seeded_multi_output_slots() {
     let grad_key = GlobalValKey::Input(sk("grad_x"));
-    let node = Arc::new(GradNode::new(
-        TwoOutputOp::Split,
-        vec![input_key.clone()],
-        vec![out0_key, out1_key.clone()],
-        HashMap::from([
-            (input_key, arc(3.0)),
-            (GlobalValKey::Input(sk("out0")), arc(3.0)),
-            (GlobalValKey::Input(sk("out1")), arc(6.0)),
-        ]),
-        vec![GradEdge::new(None, grad_key.clone(), true)],
-    ));
-    let sorted = topo_sort_grad_dag(&Some(node));
+    let inputs = vec![Input {
+        key: grad_key.clone(),
+        trace: None,
+        requires_grad: true,
+        data: arc(3.0),
+    }];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = recorder.record(TwoOutputOp::Split, &inputs, &[arc(3.0), arc(6.0)]);
     let mut callbacks = PartialOutputCallbacks {
         observed_fragment_outputs: 0,
         observed_seed_slots: 0,
     };
 
-    let cotangents = backward_dag(&sorted, &out1_key, arc(1.0), &mut callbacks, &mut ());
+    let cotangents = eager::try_backward(
+        &outputs[1].key,
+        outputs[1].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
 
     assert_eq!(callbacks.observed_fragment_outputs, 1);
     assert_eq!(callbacks.observed_seed_slots, 1);
@@ -468,9 +508,9 @@ fn backward_dag_linearizes_only_seeded_multi_output_slots() {
 }
 
 /// Fan-out test: f(x) = x + x, df/dx = 2.
-/// This exercises the cotangent accumulation (Op::add) path in eager_transpose_fragment.
+/// This exercises the cotangent accumulation (Op::add) path in emit transpose.
 #[test]
-fn eager_transpose_fragment_fan_out_accumulation() {
+fn emit_try_transpose_fragment_fan_out_accumulation() {
     // Build linear fragment for x + x: tangent(x) used twice
     let mut builder = FragmentBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
@@ -493,7 +533,8 @@ fn eager_transpose_fragment_fan_out_accumulation() {
 
     let mut emitter = ScalarEagerEmitter::new(HashMap::new());
     let seed = emitter.push_value(arc(1.0));
-    let cotangent_inputs = eager_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ());
+    let cotangent_inputs =
+        emit::try_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
 
     // df/dx = 2 (cotangent accumulated from two paths)
     let dx = *emitter.value(cotangent_inputs[0].expect("active"));

@@ -4,10 +4,8 @@ use std::sync::Arc;
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
-use tidu::{
-    backward_dag, eager_transpose_fragment, record_eager_op, topo_sort_grad_dag, BackwardCallbacks,
-    EagerKeySource, EagerValue,
-};
+use tidu::eager::{self, BackwardExecutor, Input, KeySource as EagerKeySource, Recorder};
+use tidu::emit;
 use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -253,10 +251,10 @@ fn key(name: &str) -> GlobalValKey<RecorderOp> {
     GlobalValKey::Input(Key::User(name.to_string()))
 }
 
-fn eager_value(name: &str, value: f64, requires_grad: bool) -> EagerValue<RecorderOp> {
-    EagerValue {
+fn eager_value(name: &str, value: f64, requires_grad: bool) -> Input<RecorderOp> {
+    Input {
         key: key(name),
-        node: None,
+        trace: None,
         requires_grad,
         data: Arc::new(value),
     }
@@ -321,7 +319,7 @@ struct Callbacks {
     last_initial_data: HashMap<GlobalValKey<RecorderOp>, Arc<f64>>,
 }
 
-impl BackwardCallbacks<RecorderOp> for Callbacks {
+impl BackwardExecutor<RecorderOp> for Callbacks {
     fn execute_forward(
         &mut self,
         fragment: &Fragment<RecorderOp>,
@@ -365,22 +363,23 @@ impl BackwardCallbacks<RecorderOp> for Callbacks {
         all_values
     }
 
-    fn eager_transpose(
+    fn execute_transpose(
         &mut self,
         linear: &tidu::LinearFragment<RecorderOp>,
         cotangent_out: &[Option<Arc<f64>>],
         external_data: &HashMap<GlobalValKey<RecorderOp>, Arc<f64>>,
         ctx: &mut (),
-    ) -> Vec<Option<Arc<f64>>> {
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         let mut emitter = EagerEmitter::new(external_data.clone());
         let seed_ids: Vec<_> = cotangent_out
             .iter()
             .map(|seed| seed.as_ref().map(|value| emitter.push(value.clone())))
             .collect();
-        eager_transpose_fragment(linear, &mut emitter, &seed_ids, ctx)
-            .into_iter()
-            .map(|id| id.map(|id| emitter.value(id)))
-            .collect()
+        emit::try_transpose_fragment(linear, &mut emitter, &seed_ids, ctx).map(|ids| {
+            ids.into_iter()
+                .map(|id| id.map(|id| emitter.value(id)))
+                .collect()
+        })
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -391,23 +390,17 @@ impl BackwardCallbacks<RecorderOp> for Callbacks {
 #[test]
 fn record_eager_binary_op_and_skips_inactive_input_cotangents() {
     let inputs = vec![eager_value("x", 3.0, true), eager_value("y", 4.0, false)];
-    let mut keys = KeySource::default();
-    let outputs = record_eager_op(&mut keys, RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
-    let node = outputs[0].node.as_ref().expect("recorded grad node");
-
-    assert_eq!(node.input_edges().len(), 2);
-    assert!(node.input_edges()[0].requires_grad);
-    assert!(!node.input_edges()[1].requires_grad);
-
-    let sorted = topo_sort_grad_dag(&outputs[0].node);
+    let mut recorder = Recorder::new(KeySource::default());
+    let outputs = recorder.record(RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
     let mut callbacks = Callbacks::default();
-    let cotangents = backward_dag(
-        &sorted,
+    let cotangents = eager::try_backward(
         &outputs[0].key,
+        outputs[0].trace.as_ref(),
         Arc::new(1.0),
         &mut callbacks,
         &mut (),
-    );
+    )
+    .unwrap();
 
     assert_eq!(**cotangents.get(&key("x")).expect("cotangent for x"), 4.0);
     assert!(
@@ -423,50 +416,45 @@ fn record_eager_nary_op_builds_all_input_edges() {
         eager_value("b", 2.0, false),
         eager_value("c", 3.0, true),
     ];
-    let mut keys = KeySource::default();
-    let outputs = record_eager_op(&mut keys, RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
-    let node = outputs[0].node.as_ref().expect("recorded grad node");
-    let edge_keys: Vec<_> = node
-        .input_edges()
-        .iter()
-        .map(|edge| edge.key.clone())
-        .collect();
+    let mut recorder = Recorder::new(KeySource::default());
+    let outputs = recorder.record(RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
+    let mut callbacks = Callbacks::default();
+    let cotangents = eager::try_backward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        Arc::new(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
 
-    assert_eq!(edge_keys, vec![key("a"), key("b"), key("c")]);
-    assert_eq!(
-        node.input_edges()
-            .iter()
-            .map(|edge| edge.requires_grad)
-            .collect::<Vec<_>>(),
-        vec![true, false, true]
+    assert_eq!(**cotangents.get(&key("a")).expect("cotangent for a"), 1.0);
+    assert!(
+        !cotangents.contains_key(&key("b")),
+        "inactive input must not receive a cotangent"
     );
+    assert_eq!(**cotangents.get(&key("c")).expect("cotangent for c"), 1.0);
 }
 
 #[test]
 fn record_eager_multi_output_op_uses_one_node_and_seeds_nonzero_slot() {
     let inputs = vec![eager_value("x", 3.0, true)];
-    let mut keys = KeySource::default();
-    let outputs = record_eager_op(
-        &mut keys,
-        RecorderOp::Split,
-        &inputs,
-        &[Arc::new(3.0), Arc::new(-3.0)],
-    );
+    let mut recorder = Recorder::new(KeySource::default());
+    let outputs = recorder.record(RecorderOp::Split, &inputs, &[Arc::new(3.0), Arc::new(-3.0)]);
 
     assert_eq!(outputs.len(), 2);
-    let first = outputs[0].node.as_ref().expect("first output node");
-    let second = outputs[1].node.as_ref().expect("second output node");
-    assert!(Arc::ptr_eq(first, second));
+    assert!(outputs[0].trace.is_some());
+    assert!(outputs[1].trace.is_some());
 
-    let sorted = topo_sort_grad_dag(&outputs[1].node);
     let mut callbacks = Callbacks::default();
-    let cotangents = backward_dag(
-        &sorted,
+    let cotangents = eager::try_backward(
         &outputs[1].key,
+        outputs[1].trace.as_ref(),
         Arc::new(1.0),
         &mut callbacks,
         &mut (),
-    );
+    )
+    .unwrap();
 
     assert_eq!(**cotangents.get(&key("x")).expect("cotangent for x"), -1.0);
     assert!(

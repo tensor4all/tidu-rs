@@ -126,9 +126,7 @@ where
                     output_keys.len()
                 );
 
-                for (output_key, tangent_output) in
-                    output_keys.into_iter().zip(tangent_out.into_iter())
-                {
+                for (output_key, tangent_output) in output_keys.into_iter().zip(tangent_out) {
                     tangent_env.insert(output_key, tangent_output);
                 }
             }

@@ -6,109 +6,48 @@ use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
 
-use crate::grad_node::GradNode;
 use crate::LinearFragment;
 
-/// Caller-provided execution hooks for eager backward.
-pub trait BackwardCallbacks<Op: PrimitiveOp>
+use super::trace::{Trace, TraceNode};
+
+/// Downstream execution hooks for eager backward.
+pub trait BackwardExecutor<Op: PrimitiveOp>
 where
     Op::InputKey: ADKey,
 {
     /// Execute a linear fragment forward and return any concrete values needed
-    /// by eager transpose.
+    /// by transpose execution.
     fn execute_forward(
         &mut self,
         fragment: &Fragment<Op>,
         initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
     ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
 
-    /// Execute transpose eagerly for a linear fragment with concrete seeds.
-    fn eager_transpose(
+    /// Execute transpose for a linear fragment with concrete cotangent seeds.
+    fn execute_transpose(
         &mut self,
         linear: &LinearFragment<Op>,
         cotangent_out: &[Option<Arc<Op::Operand>>],
         external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
         ctx: &mut Op::ADContext,
-    ) -> Vec<Option<Arc<Op::Operand>>>;
-
-    /// Fallible eager transpose hook.
-    ///
-    /// Frontends that execute extension rules should override this method so
-    /// missing AD rules can propagate out of [`try_backward_dag`]. The default
-    /// implementation preserves the existing infallible callback contract.
-    fn try_eager_transpose(
-        &mut self,
-        linear: &LinearFragment<Op>,
-        cotangent_out: &[Option<Arc<Op::Operand>>],
-        external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
-        ctx: &mut Op::ADContext,
-    ) -> ADRuleResult<Vec<Option<Arc<Op::Operand>>>> {
-        Ok(self.eager_transpose(linear, cotangent_out, external_data, ctx))
-    }
+    ) -> ADRuleResult<Vec<Option<Arc<Op::Operand>>>>;
 
     /// Add two concrete operands for cotangent accumulation.
     fn add_operands(&mut self, a: &Arc<Op::Operand>, b: &Arc<Op::Operand>) -> Arc<Op::Operand>;
 }
 
-/// Topologically sort the reachable grad DAG in dependency-first order.
-pub fn topo_sort_grad_dag<Op: GraphOp>(
-    output_node: &Option<Arc<GradNode<Op>>>,
-) -> Vec<Arc<GradNode<Op>>> {
-    fn visit<Op: GraphOp>(
-        node: &Arc<GradNode<Op>>,
-        visited: &mut HashSet<*const GradNode<Op>>,
-        order: &mut Vec<Arc<GradNode<Op>>>,
-    ) {
-        let ptr = Arc::as_ptr(node);
-        if !visited.insert(ptr) {
-            return;
-        }
-
-        for edge in node.input_edges() {
-            if let Some(parent) = &edge.node {
-                visit(parent, visited, order);
-            }
-        }
-
-        order.push(node.clone());
-    }
-
-    let mut visited = HashSet::new();
-    let mut order = Vec::new();
-    if let Some(node) = output_node {
-        visit(node, &mut visited, &mut order);
-    }
-    order
-}
-
-/// Execute reverse-mode AD over a grad DAG.
-pub fn backward_dag<Op: PrimitiveOp>(
-    sorted_nodes: &[Arc<GradNode<Op>>],
+/// Execute reverse-mode AD over an eager trace.
+pub fn try_backward<Op: PrimitiveOp>(
     output_key: &GlobalValKey<Op>,
+    output_trace: Option<&Trace<Op>>,
     seed: Arc<Op::Operand>,
-    callbacks: &mut impl BackwardCallbacks<Op>,
-    ctx: &mut Op::ADContext,
-) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>
-where
-    Op::InputKey: ADKey,
-{
-    match try_backward_dag(sorted_nodes, output_key, seed, callbacks, ctx) {
-        Ok(cotangents) => cotangents,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Fallible form of [`backward_dag`].
-pub fn try_backward_dag<Op: PrimitiveOp>(
-    sorted_nodes: &[Arc<GradNode<Op>>],
-    output_key: &GlobalValKey<Op>,
-    seed: Arc<Op::Operand>,
-    callbacks: &mut impl BackwardCallbacks<Op>,
+    executor: &mut impl BackwardExecutor<Op>,
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<HashMap<GlobalValKey<Op>, Arc<Op::Operand>>>
 where
     Op::InputKey: ADKey,
 {
+    let sorted_nodes = topo_sort_trace(output_trace);
     let mut cotangents: HashMap<GlobalValKey<Op>, Arc<Op::Operand>> = HashMap::new();
     cotangents.insert(output_key.clone(), seed);
 
@@ -132,11 +71,11 @@ where
         }
 
         let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
-        let all_values = callbacks.execute_forward(&linear.fragment, node.saved_data());
+        let all_values = executor.execute_forward(&linear.fragment, node.saved_data());
         let cotangent_in =
-            callbacks.try_eager_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
+            executor.execute_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
 
-        for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in.into_iter()) {
+        for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in) {
             let Some(cotangent) = maybe_cotangent else {
                 continue;
             };
@@ -145,7 +84,7 @@ where
             }
 
             let accumulated = match cotangents.remove(&edge.key) {
-                Some(existing) => callbacks.add_operands(&existing, &cotangent),
+                Some(existing) => executor.add_operands(&existing, &cotangent),
                 None => cotangent,
             };
             cotangents.insert(edge.key.clone(), accumulated);
@@ -155,8 +94,36 @@ where
     Ok(cotangents)
 }
 
+fn topo_sort_trace<Op: GraphOp>(output_trace: Option<&Trace<Op>>) -> Vec<Arc<TraceNode<Op>>> {
+    fn visit<Op: GraphOp>(
+        node: &Arc<TraceNode<Op>>,
+        visited: &mut HashSet<*const TraceNode<Op>>,
+        order: &mut Vec<Arc<TraceNode<Op>>>,
+    ) {
+        let ptr = Arc::as_ptr(node);
+        if !visited.insert(ptr) {
+            return;
+        }
+
+        for edge in node.input_edges() {
+            if let Some(parent) = &edge.node {
+                visit(parent, visited, order);
+            }
+        }
+
+        order.push(node.clone());
+    }
+
+    let mut visited = HashSet::new();
+    let mut order = Vec::new();
+    if let Some(trace) = output_trace {
+        visit(trace.node(), &mut visited, &mut order);
+    }
+    order
+}
+
 fn try_build_single_op_linear<Op: PrimitiveOp>(
-    node: &GradNode<Op>,
+    node: &TraceNode<Op>,
     output_slots: &[usize],
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<LinearFragment<Op>>

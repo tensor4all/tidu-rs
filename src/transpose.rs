@@ -99,7 +99,7 @@ where
             rule_inputs.len()
         );
 
-        for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in.into_iter()) {
+        for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
             let Some(cotangent_id) = maybe_cotangent else {
                 continue;
             };

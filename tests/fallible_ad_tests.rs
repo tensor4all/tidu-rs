@@ -5,7 +5,7 @@ use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, OpMode, ValRef};
 use computegraph::{GraphOp, LocalValId, OpEmitter};
-use tidu::{try_differentiate, try_eager_transpose_fragment, try_transpose, LinearFragment};
+use tidu::{emit, try_differentiate, try_transpose, LinearFragment};
 use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -171,14 +171,14 @@ fn try_transpose_propagates_transpose_error() {
 }
 
 #[test]
-fn try_eager_transpose_fragment_propagates_transpose_error() {
+fn emit_try_transpose_fragment_propagates_transpose_error() {
     let linear = linear_fragment_with_missing_op();
     let mut emitter = FragmentBuilder::<Op>::new();
     let seed = emitter.add_input(Key::Base("ct"));
     let mut ctx = ();
 
     let err =
-        try_eager_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ctx).unwrap_err();
+        emit::try_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ctx).unwrap_err();
 
     assert_eq!(err.rule(), ADRuleKind::Transpose);
 }

@@ -5,27 +5,11 @@ use computegraph::{GlobalValKey, LocalValId, OpEmitter, OpMode, ValRef};
 
 use crate::LinearFragment;
 
-/// Execute the transpose of a linear fragment using an eager emitter.
+/// Execute the transpose of a linear fragment using a caller-provided emitter.
 ///
-/// This mirrors [`crate::transpose`] but leaves execution strategy to the
-/// caller-provided [`computegraph::OpEmitter`].
-pub fn eager_transpose_fragment<Op: PrimitiveOp>(
-    linear: &LinearFragment<Op>,
-    emitter: &mut impl OpEmitter<Op>,
-    cotangent_seeds: &[Option<LocalValId>],
-    ctx: &mut Op::ADContext,
-) -> Vec<Option<LocalValId>>
-where
-    Op::InputKey: crate::ADKey,
-{
-    match try_eager_transpose_fragment(linear, emitter, cotangent_seeds, ctx) {
-        Ok(cotangents) => cotangents,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Fallible form of [`eager_transpose_fragment`].
-pub fn try_eager_transpose_fragment<Op: PrimitiveOp>(
+/// This mirrors [`crate::try_transpose`] but leaves concrete execution and
+/// value storage to the downstream [`computegraph::OpEmitter`].
+pub fn try_transpose_fragment<Op: PrimitiveOp>(
     linear: &LinearFragment<Op>,
     emitter: &mut impl OpEmitter<Op>,
     cotangent_seeds: &[Option<LocalValId>],
@@ -86,7 +70,7 @@ where
             rule_inputs.len()
         );
 
-        for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in.into_iter()) {
+        for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
             let Some(cotangent_id) = maybe_cotangent else {
                 continue;
             };

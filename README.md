@@ -5,7 +5,8 @@ AD graph transforms for the tensor4all v2 stack.
 Provides:
 - `differentiate` / `try_differentiate` — JVP transform (resolved view → linear fragment)
 - `transpose` / `try_transpose` — reverse linear flow (linear fragment → linear fragment)
-- eager reverse-mode AD helpers around `GradNode` / `backward_dag`
+- `tidu::eager` — generic eager reverse-mode recording for `PrimitiveOp` frontends
+- `tidu::emit` — helpers for executing AD-generated fragments through an `OpEmitter`
 
 Use the `try_*` APIs when downstream primitive sets can report unsupported
 extension AD rules through `tidu::ADRuleError`.
@@ -14,14 +15,14 @@ Fully generic over `Op: PrimitiveOp`. References no specific primitives.
 
 ## Eager AD
 
-`tidu` provides a small generic recording layer for PyTorch-style eager
+`tidu::eager` provides a small generic recording layer for PyTorch-style eager
 reverse-mode AD. Downstream frontends execute concrete primal operations, then
-call `record_eager_op()` with input trace metadata and concrete output values.
-`tidu` allocates stable input aliases and output keys, saves replay data, builds
-`GradEdge`s, and shares one `GradNode` across multi-output operations.
+use a `Recorder` with input trace metadata and concrete output values. `tidu`
+allocates stable input aliases and output keys, saves replay data, and shares
+one opaque `Trace` across multi-output operations.
 
 Downstream crates still own backend execution, tensor metadata, gradient slots,
-and `BackwardCallbacks` for concrete forward replay, eager transpose execution,
+and `BackwardExecutor` for concrete forward replay, transpose execution,
 and cotangent addition.
 
 ## Complex number convention (JAX-compatible)

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chainrules::{ADKey, ADRuleResult, PrimitiveOp};
+use crate::{ADKey, ADRuleResult, PrimitiveOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};

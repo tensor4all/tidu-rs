@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
@@ -9,6 +8,7 @@ use tidu::{
     backward_dag, eager_transpose_fragment, record_eager_op, topo_sort_grad_dag, BackwardCallbacks,
     EagerKeySource, EagerValue,
 };
+use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {

@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use chainrules::{ADKey, DiffPassId};
+use tidu::{ADKey, DiffPassId};
 
 #[macro_export]
 macro_rules! define_ad_key {

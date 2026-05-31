@@ -8,7 +8,7 @@ Provides:
 - eager reverse-mode AD helpers around `GradNode` / `backward_dag`
 
 Use the `try_*` APIs when downstream primitive sets can report unsupported
-extension AD rules through `chainrules::ADRuleError`.
+extension AD rules through `tidu::ADRuleError`.
 
 Fully generic over `Op: PrimitiveOp`. References no specific primitives.
 
@@ -89,7 +89,6 @@ Each `differentiate` call requires a unique `DiffPassId` and a preceding
 
 ```text
 computegraph-rs    graph engine
-chainrules-rs      PrimitiveOp trait
-tidu-rs        <-- this crate (differentiate, transpose)
+tidu-rs            PrimitiveOp trait, differentiate, transpose
 tenferro-rs        concrete primitives
 ```

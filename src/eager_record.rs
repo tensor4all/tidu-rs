@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chainrules::{ADKey, PrimitiveOp};
+use crate::{ADKey, PrimitiveOp};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, OpMode};
 
 use crate::{GradEdge, GradNode};

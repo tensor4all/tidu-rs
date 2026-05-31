@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chainrules::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, OpMode, ValRef};
 use computegraph::{GraphOp, LocalValId, OpEmitter};
 use tidu::{try_differentiate, try_eager_transpose_fragment, try_transpose, LinearFragment};
+use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {

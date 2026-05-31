@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chainrules::{ADKey, DiffPassId, PrimitiveOp};
 use computegraph::compile::compile;
 use computegraph::fragment::Fragment;
 use computegraph::fragment::FragmentBuilder;
@@ -10,6 +9,7 @@ use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
 use tidu::LinearFragment;
+use tidu::{ADKey, DiffPassId, PrimitiveOp};
 
 use crate::{
     define_ad_key, linearize_add, linearize_exp, linearize_mul, linearize_neg, transpose_add,

@@ -4,7 +4,7 @@ use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 /// Extends `GraphOp` with primitive JVP and transpose rules for AD.
 ///
 /// - `try_jvp_rule` is called by [`crate::try_linearize`]
-/// - `try_transpose_rule` is called by [`crate::try_linear_transpose`]
+/// - `try_linear_transpose_rule` is called by [`crate::try_linear_transpose`]
 ///
 /// Both methods emit new primitive applications through a [`PrimitiveBuilder`]. The downstream
 /// implementor is responsible for ensuring closure: every op emitted must also
@@ -128,7 +128,7 @@ where
     /// this method and return [`super::ADRuleError`] instead of panicking. The
     /// default implementation preserves the infallible contract for existing
     /// primitive sets.
-    fn try_transpose_rule(
+    fn try_linear_transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValId>],

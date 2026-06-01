@@ -23,8 +23,8 @@ where
         initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
     ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
 
-    /// Execute transpose for a linearized graph with concrete cotangent seeds.
-    fn execute_transpose(
+    /// Run a transposed linear graph with concrete cotangent seeds.
+    fn run_transposed_linear(
         &mut self,
         linear: &LinearizedGraph<Op>,
         cotangent_out: &[Option<Arc<Op::Operand>>],
@@ -74,7 +74,7 @@ where
         let replay_graph = PrimitiveGraph::new(linear.as_graph());
         let all_values = executor.execute_forward(replay_graph, node.saved_data());
         let cotangent_in =
-            executor.execute_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
+            executor.run_transposed_linear(&linear, &active_cotangent_out, &all_values, ctx)?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in) {
             let Some(cotangent) = maybe_cotangent else {

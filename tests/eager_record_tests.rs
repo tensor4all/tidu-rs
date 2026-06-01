@@ -371,7 +371,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
         all_values
     }
 
-    fn execute_transpose(
+    fn run_transposed_linear(
         &mut self,
         linear: &LinearizedGraph<RecorderOp>,
         cotangent_out: &[Option<Arc<f64>>],

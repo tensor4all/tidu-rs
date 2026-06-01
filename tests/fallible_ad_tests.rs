@@ -115,12 +115,14 @@ impl Primitive for Op {
     ) -> Vec<Option<LocalValId>> {
         match self {
             Op::Add => vec![cotangent_out[0], cotangent_out[0]],
-            Op::Missing => panic!("fallible linear_transpose paths should call try_transpose_rule"),
+            Op::Missing => {
+                panic!("fallible linear_transpose paths should call try_linear_transpose_rule")
+            }
             Op::EmitMissing => panic!("EmitMissing is linearized before linear_transpose"),
         }
     }
 
-    fn try_transpose_rule(
+    fn try_linear_transpose_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],

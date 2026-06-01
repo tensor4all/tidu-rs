@@ -430,7 +430,7 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
         initial_data.clone()
     }
 
-    fn execute_transpose(
+    fn run_transposed_linear(
         &mut self,
         linear: &LinearizedGraph<TwoOutputOp>,
         cotangent_out: &[Option<Arc<f64>>],
@@ -567,7 +567,7 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
         all_values
     }
 
-    fn execute_transpose(
+    fn run_transposed_linear(
         &mut self,
         linear: &LinearizedGraph<ScalarOp>,
         cotangent_out: &[Option<Arc<f64>>],

@@ -16,8 +16,8 @@ use crate::LinearizedGraph;
 ///
 /// ```ignore
 /// let mut ctx = ();
-/// let transposed = tidu::linear_transpose(&linear_fragment, &mut ctx);
-/// assert_eq!(transposed.tangent_outputs().len(), linear_fragment.tangent_inputs().len());
+/// let transposed = tidu::linear_transpose(&linear, &mut ctx);
+/// assert_eq!(transposed.tangent_outputs().len(), linear.tangent_inputs().len());
 /// ```
 pub fn linear_transpose<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
@@ -82,7 +82,7 @@ where
             .collect();
 
         let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
-        let cotangent_in = op_node.op.try_transpose_rule(
+        let cotangent_in = op_node.op.try_linear_transpose_rule(
             &mut primitive_builder,
             &cotangent_out,
             &rule_inputs,
@@ -194,7 +194,7 @@ where
             })
             .collect();
 
-        let cotangent_in = op_node.op.try_transpose_rule(
+        let cotangent_in = op_node.op.try_linear_transpose_rule(
             builder,
             &cotangent_out,
             &rule_inputs,

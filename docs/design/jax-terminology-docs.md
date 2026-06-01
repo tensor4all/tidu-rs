@@ -51,11 +51,11 @@ The documentation should define these terms without assuming JAX knowledge:
 - **Transpose rule**: a local primitive rule that emits input cotangents from
   output cotangents.
 
-The first-read docs should avoid `Fragment`, `OpEmitter`, `LocalValId`,
-`ValRef`, and similar storage-level words. If those names remain necessary for
-interoperability with `computegraph`, isolate them in architecture or internals
-documentation and provide explicit escape hatches rather than making them the
-main abstraction.
+The first-read docs should avoid storage-level words from `computegraph`.
+Architecture or internals pages may name lower-level computegraph types such as
+`Fragment`, `OpEmitter`, `LocalValId`, and `ValRef` when documenting escape
+hatches or storage integration, but those terms should not be presented as the
+main `tidu` API vocabulary.
 
 ## Public API Direction
 
@@ -77,10 +77,10 @@ oriented methods. If downstream crates need raw access, provide explicit
 advanced methods such as `as_graph()` or `into_graph()` and keep those methods
 out of the tutorial path.
 
-The rule-building boundary should avoid exposing `computegraph::OpEmitter` as a
-primary concept. Add a `tidu`-owned `PrimitiveBuilder` trait that local JVP and
-transpose rules use to append primitive applications. Internally, `tidu` can
-adapt this trait to `computegraph`.
+The rule-building boundary should avoid exposing lower-level `computegraph`
+builders as primary concepts. Use the `tidu`-owned `PrimitiveBuilder` trait
+that local JVP and transpose rules use to append primitive applications.
+Internally, `tidu` can adapt this trait to `computegraph`.
 
 ## Eager Integration
 
@@ -207,8 +207,9 @@ Guides should be broader than tutorials and explain contracts:
 ### Architecture And Internals
 
 Architecture docs may explain the dependency on `computegraph` and the exact
-storage model. They should explicitly label `Fragment`, `OpEmitter`, and
-related terms as lower-level integration details.
+storage model. They may name lower-level computegraph details such as
+`Fragment`, `OpEmitter`, `LocalValId`, and `ValRef`, but should explicitly
+label them as advanced integration material rather than first-read concepts.
 
 Internals docs should be optional. A downstream implementer should be able to
 write primitives and eager integration without starting there.
@@ -220,8 +221,7 @@ The implementation should be staged:
 1. Add tests that describe the new names and the absence of old root-level
    names from the intended public path.
 2. Rename graph transform APIs and public types.
-3. Introduce `PrimitiveBuilder`, replacing `OpEmitter` in public rule
-   signatures.
+3. Introduce `PrimitiveBuilder` for public rule signatures.
 4. Wrap or hide computegraph fragments behind `LinearizedGraph` and any
    required primitive graph wrapper.
 5. Align eager recording around `EagerInput`/`EagerOutput` and adjust executor

@@ -170,7 +170,7 @@ impl Primitive for RecorderOp {
                 );
                 vec![Some(out[0])]
             }
-            Self::Split => panic!("Split is linearized before transpose"),
+            Self::Split => panic!("Split is linearized before linear_transpose"),
             Self::Sum3 => vec![Some(ct), Some(ct), Some(ct)],
         }
     }

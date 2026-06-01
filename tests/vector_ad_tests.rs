@@ -10,7 +10,7 @@ use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, Axis, IxDyn};
-use tidu::{differentiate, transpose};
+use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
@@ -333,7 +333,7 @@ fn finite_difference_sum_exp_ax(
 #[test]
 fn jvp_elementwise_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -364,7 +364,7 @@ fn jvp_elementwise_exp_ax() {
 #[test]
 fn vjp_elementwise_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -372,7 +372,7 @@ fn vjp_elementwise_exp_ax() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -396,7 +396,7 @@ fn vjp_elementwise_exp_ax() {
 #[test]
 fn jvp_sum_exp_ax() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -427,7 +427,7 @@ fn jvp_sum_exp_ax() {
 #[test]
 fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -435,7 +435,7 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -459,7 +459,7 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
 #[test]
 fn numerical_gradient_sum_exp_ax_matches_vjp() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -467,7 +467,7 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");

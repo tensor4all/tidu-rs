@@ -1,12 +1,12 @@
 use std::hash::Hash;
 
-/// Unique identifier for a [`crate::differentiate`] call.
+/// Unique identifier for a [`crate::linearize`] call.
 pub type DiffPassId = u64;
 
 /// Constraint on `GraphOp::InputKey` for AD use.
 ///
 /// `tidu` uses this trait to generate tangent input keys during
-/// [`crate::differentiate`].
+/// [`crate::linearize`].
 ///
 /// # Examples
 ///
@@ -30,6 +30,6 @@ pub type DiffPassId = u64;
 /// ```
 pub trait ADKey: Clone + std::fmt::Debug + Hash + Eq + Send + Sync + 'static {
     /// Create a tangent input key derived from this key.
-    /// `pass` is a unique identifier for the `differentiate` call.
+    /// `pass` is a unique identifier for the `linearize` call.
     fn tangent_of(&self, pass: DiffPassId) -> Self;
 }

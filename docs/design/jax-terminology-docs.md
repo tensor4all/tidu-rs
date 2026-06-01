@@ -59,19 +59,17 @@ main abstraction.
 
 ## Public API Direction
 
-This is a breaking-change direction. Keeping both old and new names would leave
-two vocabularies in the crate and make the docs harder to learn.
+This is a breaking-change direction. Keeping multiple public vocabularies in
+the crate would make the docs harder to learn.
 
-Recommended public renames:
+The root graph-transform API should be documented with the current
+JAX-aligned names:
 
-| Current | Proposed |
-| --- | --- |
-| `differentiate` | `linearize` |
-| `try_differentiate` | `try_linearize` |
-| `transpose` | `linear_transpose` |
-| `try_transpose` | `try_linear_transpose` |
-| `LinearFragment` | `LinearizedGraph` |
-| `PrimitiveOp` | `Primitive` |
+- `linearize` and `try_linearize` build a linearized graph for selected inputs.
+- `linear_transpose` and `try_linear_transpose` transpose a linearized graph
+  for cotangent propagation.
+- `LinearizedGraph` is the public wrapper for graph transform results.
+- `Primitive` is the public trait implemented by downstream operation sets.
 
 `LinearizedGraph` should not expose a public `fragment` field. It should own
 the lower-level computegraph representation privately and expose use-case
@@ -114,11 +112,11 @@ names. `BackwardExecutor` remains acceptable because it describes the
 downstream hook that performs concrete replay, transpose execution, and
 cotangent addition.
 
-The eager executor boundary should also stop exposing raw `Fragment` or
-`LinearFragment` values. Pass wrapper types instead: `PrimitiveGraph` for
-primal replay and `LinearizedGraph` for transpose execution. These wrappers
-hide storage layout while still giving downstream executors enough information
-to run primitive applications.
+The eager executor boundary should also stop exposing raw graph storage values.
+Pass wrapper types instead: `PrimitiveGraph` for primal replay and
+`LinearizedGraph` for transpose execution. These wrappers hide storage layout
+while still giving downstream executors enough information to run primitive
+applications.
 
 ## Documentation Structure
 

@@ -3,8 +3,8 @@ use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 
 /// Extends `GraphOp` with primitive JVP and transpose rules for AD.
 ///
-/// - `try_jvp_rule` is called by [`crate::try_differentiate`]
-/// - `try_transpose_rule` is called by [`crate::try_transpose`]
+/// - `try_jvp_rule` is called by [`crate::try_linearize`]
+/// - `try_transpose_rule` is called by [`crate::try_linear_transpose`]
 ///
 /// Both methods emit new primitive applications through a [`PrimitiveBuilder`]. The downstream
 /// implementor is responsible for ensuring closure: every op emitted must also
@@ -59,15 +59,15 @@ pub trait Primitive: GraphOp
 where
     Self::InputKey: ADKey,
 {
-    /// Runtime AD context threaded through linearization and transpose.
+    /// Runtime AD context threaded through linearization and transposition.
     ///
     /// This can carry information such as concrete shapes or guard decisions
     /// that influence how AD rules emit graph structure.
     type ADContext: Default;
 
     /// Returns the addition operation used for cotangent accumulation
-    /// in [`crate::transpose`]. When multiple cotangents flow to the same
-    /// `GlobalValKey`, transpose emits `Op::add()` nodes to sum them.
+    /// in [`crate::linear_transpose`]. When multiple cotangents flow to the same
+    /// `GlobalValKey`, `linear_transpose` emits `Op::add()` nodes to sum them.
     fn add() -> Self
     where
         Self: Sized;

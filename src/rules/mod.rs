@@ -1,7 +1,7 @@
 //! Primitive AD rule contract consumed by `tidu`.
 //!
 //! This module defines the graph-level rule surface used by
-//! [`crate::try_differentiate`], [`crate::try_transpose`], and eager transpose
+//! [`crate::try_linearize`], [`crate::try_linear_transpose`], and eager transpose
 //! helpers. It is intentionally narrower than Julia ChainRules: downstream
 //! primitive sets implement JVP and transpose emission for
 //! `computegraph` graph primitives.

@@ -9,7 +9,7 @@ use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
 
 use crate::LinearizedGraph;
 
-/// Differentiate a resolved computation graph, producing a linear fragment.
+/// Linearize a resolved computation graph, producing a linear graph.
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
@@ -19,16 +19,16 @@ use crate::LinearizedGraph;
 ///
 /// ```ignore
 /// use computegraph::resolve::resolve;
-/// use tidu::try_differentiate;
+/// use tidu::try_linearize;
 ///
 /// let view = resolve(vec![primal_fragment]);
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
-/// let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+/// let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
 /// assert_eq!(linear.tangent_outputs().len(), 1);
 /// # Ok::<(), crate::ADRuleError>(())
 /// ```
-pub fn differentiate<Op: Primitive>(
+pub fn linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
@@ -39,18 +39,18 @@ pub fn differentiate<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    match try_differentiate(view, outputs, wrt, pass, ctx, aliases) {
+    match try_linearize(view, outputs, wrt, pass, ctx, aliases) {
         Ok(linear) => linear,
         Err(err) => panic!("{err}"),
     }
 }
 
-/// Fallible form of [`differentiate`].
+/// Fallible form of [`linearize`].
 ///
 /// This returns [`crate::ADRuleError`] when a primitive cannot emit a JVP
 /// rule, allowing downstream frontends to surface missing extension rules as
 /// normal errors instead of panics.
-pub fn try_differentiate<Op: Primitive>(
+pub fn try_linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],

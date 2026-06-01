@@ -1,9 +1,9 @@
 //! AD graph transforms for the tensor4all v2 stack.
 //!
 //! This crate provides two graph-to-graph transforms:
-//! [`differentiate`] for forward linearization (JVP) and [`transpose`] for
-//! reverse linear flow over a linear fragment.
-//! Fallible variants (`try_differentiate`, `try_transpose`, and
+//! [`linearize`] for forward linearization (JVP) and [`linear_transpose`] for
+//! reverse linear flow over a linearized graph.
+//! Fallible variants (`try_linearize`, `try_linear_transpose`, and
 //! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or
 //! extension AD rules.
 //! It also provides a small [`eager`] module for downstream frontends that want
@@ -13,27 +13,28 @@
 //!
 //! ```ignore
 //! use computegraph::resolve::resolve;
-//! use tidu::{try_differentiate, try_transpose};
+//! use tidu::{try_linear_transpose, try_linearize};
 //!
 //! let view = resolve(vec![primal_fragment]);
 //! let mut ctx = ();
 //! let aliases = std::collections::HashMap::new();
-//! let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
-//! let _transposed = try_transpose(&linear, &mut ctx)?;
+//! let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+//! let _transposed = try_linear_transpose(&linear, &mut ctx)?;
 //! # Ok::<(), tidu::ADRuleError>(())
 //! ```
 
-mod differentiate;
 pub mod eager;
-pub mod emit;
+mod linear_transpose;
+mod linearize;
 mod linearized_graph;
 pub mod rules;
-mod transpose;
 
-pub use differentiate::{differentiate, try_differentiate};
+pub use linear_transpose::{
+    linear_transpose, try_linear_transpose, try_linear_transpose_with_builder,
+};
+pub use linearize::{linearize, try_linearize};
 pub use linearized_graph::LinearizedGraph;
 pub use rules::{
     ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
     PrimitiveValue,
 };
-pub use transpose::{transpose, try_transpose};

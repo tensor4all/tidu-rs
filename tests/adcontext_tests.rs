@@ -115,13 +115,13 @@ fn build_identity_chain() -> (Arc<Fragment<CountingOp>>, GlobalValKey<CountingOp
 }
 
 #[test]
-fn differentiate_threads_ctx_to_all_ops() {
+fn linearize_threads_ctx_to_all_ops() {
     let (primal, output_key) = build_identity_chain();
     let view = resolve(vec![primal]);
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let _linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let _linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     assert_eq!(
         ctx.linearize_count, 2,
@@ -130,17 +130,17 @@ fn differentiate_threads_ctx_to_all_ops() {
 }
 
 #[test]
-fn transpose_threads_ctx_to_all_ops() {
+fn linear_transpose_threads_ctx_to_all_ops() {
     let (primal, output_key) = build_identity_chain();
     let view = resolve(vec![primal]);
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     ctx.linearize_count = 0;
     ctx.transpose_count = 0;
-    let _transposed = tidu::transpose(&linear, &mut ctx);
+    let _transposed = tidu::linear_transpose(&linear, &mut ctx);
 
     assert_eq!(
         ctx.transpose_count, 2,
@@ -148,6 +148,6 @@ fn transpose_threads_ctx_to_all_ops() {
     );
     assert_eq!(
         ctx.linearize_count, 0,
-        "linearize should not be called during transpose"
+        "linearize should not be called during linear_transpose"
     );
 }

@@ -16,14 +16,14 @@ where
     Op::InputKey: ADKey,
 {
     /// Execute a linear fragment forward and return any concrete values needed
-    /// by transpose execution.
+    /// by `linear_transpose` execution.
     fn execute_forward(
         &mut self,
         fragment: &Fragment<Op>,
         initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
     ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
 
-    /// Execute transpose for a linear fragment with concrete cotangent seeds.
+    /// Execute `linear_transpose` for a linear fragment with concrete cotangent seeds.
     fn execute_transpose(
         &mut self,
         linear: &LinearizedGraph<Op>,
@@ -188,5 +188,5 @@ where
         .collect();
     let aliases = HashMap::new();
 
-    crate::try_differentiate(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
+    crate::try_linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 }

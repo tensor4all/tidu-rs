@@ -9,7 +9,7 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, OpMode, ValRef};
-use tidu::{differentiate, transpose};
+use tidu::{linear_transpose, linearize};
 
 const TOL: f64 = 1e-10;
 
@@ -114,7 +114,7 @@ fn finite_difference_exp_ax(
 #[test]
 fn jvp_x_plus_x() {
     let (primal, y_key) = build_x_plus_x();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -138,7 +138,7 @@ fn jvp_x_plus_x() {
 #[test]
 fn jvp_x_times_y() {
     let (primal, y_key) = build_x_times_y();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -162,7 +162,7 @@ fn jvp_x_times_y() {
 #[test]
 fn jvp_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -186,7 +186,7 @@ fn jvp_exp_ax() {
 #[test]
 fn vjp_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -194,7 +194,7 @@ fn vjp_exp_ax() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -214,7 +214,7 @@ fn vjp_exp_ax() {
 #[test]
 fn vjp_x_plus_x_times_x() {
     let (primal, y_key) = build_x_plus_x_times_x();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -222,7 +222,7 @@ fn vjp_x_plus_x_times_x() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -238,7 +238,7 @@ fn vjp_x_plus_x_times_x() {
 #[test]
 fn fof_x_squared() {
     let (primal, y_key) = build_x_squared();
-    let linear_1 = differentiate(
+    let linear_1 = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -250,7 +250,7 @@ fn fof_x_squared() {
     let dx1_key = tangent_input_key(&linear_1, 0);
     let linear_1_fragment = Arc::new(linear_1.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
         std::slice::from_ref(&dy_key),
         &[sk("x")],
@@ -273,7 +273,7 @@ fn fof_x_squared() {
 #[test]
 fn for_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -281,12 +281,12 @@ fn for_exp_ax() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_seed_key = tangent_input_key(&transposed, 0);
     let transposed_fragment = Arc::new(transposed.into_graph());
 
-    let second_linear = differentiate(
+    let second_linear = linearize(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
         std::slice::from_ref(&ct_x_key),
         &[sk("x")],
@@ -319,7 +319,7 @@ fn for_exp_ax() {
 #[test]
 fn numerical_gradient_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -327,7 +327,7 @@ fn numerical_gradient_exp_ax() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");

@@ -322,7 +322,7 @@ impl Primitive for TwoOutputOp {
     ) -> Vec<Option<LocalValId>> {
         match self {
             Self::Add => vec![cotangent_out[0], cotangent_out[0]],
-            Self::Split => panic!("Split should be linearized before transpose"),
+            Self::Split => panic!("Split should be linearized before linear_transpose"),
         }
     }
 }
@@ -722,7 +722,7 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
 }
 
 /// Fan-out test: f(x) = x + x, df/dx = 2.
-/// This exercises the cotangent accumulation (Op::add) path in linear transpose.
+/// This exercises the cotangent accumulation (Op::add) path in `linear_transpose`.
 #[test]
 fn try_linear_transpose_with_builder_fan_out_accumulation() {
     // Build linearized graph for x + x: tangent(x) used twice

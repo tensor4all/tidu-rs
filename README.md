@@ -3,15 +3,15 @@
 AD graph transforms for the tensor4all v2 stack.
 
 Provides:
-- `differentiate` / `try_differentiate` — JVP transform (resolved view → linear fragment)
-- `transpose` / `try_transpose` — reverse linear flow (linear fragment → linear fragment)
-- `tidu::eager` — generic eager reverse-mode recording for `PrimitiveOp` frontends
-- `tidu::emit` — helpers for executing AD-generated fragments through an `OpEmitter`
+- `linearize` / `try_linearize` — JVP transform (resolved view → linear graph)
+- `linear_transpose` / `try_linear_transpose` — reverse linear flow (linear graph → linear graph)
+- `try_linear_transpose_with_builder` — helper for executing transposed linear graphs through a caller-provided builder
+- `tidu::eager` — generic eager reverse-mode recording for `Primitive` frontends
 
 Use the `try_*` APIs when downstream primitive sets can report unsupported
 extension AD rules through `tidu::ADRuleError`.
 
-Fully generic over `Op: PrimitiveOp`. References no specific primitives.
+Fully generic over `Op: Primitive`. References no specific primitives.
 
 ## Eager AD
 
@@ -29,9 +29,9 @@ and cotangent addition.
 
 Forward and reverse modes follow the JAX convention:
 
-- **`differentiate` (JVP)** computes the full R-linear derivative:
+- **`linearize` (JVP)** computes the full R-linear derivative:
   `df = (∂f/∂z)·dz + (∂f/∂z̄)·conj(dz)`
-- **`transpose` (VJP)** computes the adjoint w.r.t. the real inner product
+- **`linear_transpose` (VJP)** computes the adjoint w.r.t. the real inner product
   `⟨a, b⟩ = Re(conj(a)·b)`.
 
 For a general function f: C → C, the VJP cotangent relates to Wirtinger
@@ -55,7 +55,7 @@ directly) by a factor of 2. The steepest-descent direction is the same.
 ## Higher-order AD
 
 Higher-order derivatives are computed by repeated application of
-`differentiate` (and optionally `transpose`). Each `differentiate` call
+`linearize` (and optionally `linear_transpose`). Each `linearize` call
 consumes one tangent vector, so the output shape stays the same as the
 original function output regardless of derivative order.
 
@@ -78,18 +78,18 @@ To extract individual tensor components, use unit basis vectors as tangents:
 ### Typical pipelines
 
 ```text
-FoF:   build → resolve → differentiate → resolve → differentiate → materialize → compile → eval
-FoFoF: build → (resolve → differentiate) × 3 → materialize → compile → eval
-FoR:   build → resolve → differentiate → transpose → resolve → differentiate → materialize → compile → eval
+FoF:   build → resolve → linearize → resolve → linearize → materialize → compile → eval
+FoFoF: build → (resolve → linearize) × 3 → materialize → compile → eval
+FoR:   build → resolve → linearize → linear_transpose → resolve → linearize → materialize → compile → eval
 ```
 
-Each `differentiate` call requires a unique `DiffPassId` and a preceding
+Each `linearize` call requires a unique `DiffPassId` and a preceding
 `resolve` to make earlier fragments traceable.
 
 ## Part of the tensor4all v2 stack
 
 ```text
 computegraph-rs    graph engine
-tidu-rs            PrimitiveOp trait, differentiate, transpose
+tidu-rs            Primitive trait, linearize, linear_transpose
 tenferro-rs        concrete primitives
 ```

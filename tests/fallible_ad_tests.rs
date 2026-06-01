@@ -115,8 +115,8 @@ impl Primitive for Op {
     ) -> Vec<Option<LocalValId>> {
         match self {
             Op::Add => vec![cotangent_out[0], cotangent_out[0]],
-            Op::Missing => panic!("fallible transpose paths should call try_transpose_rule"),
-            Op::EmitMissing => panic!("EmitMissing is linearized before transpose"),
+            Op::Missing => panic!("fallible linear_transpose paths should call try_transpose_rule"),
+            Op::EmitMissing => panic!("EmitMissing is linearized before linear_transpose"),
         }
     }
 
@@ -134,8 +134,32 @@ impl Primitive for Op {
                 "Op::Missing",
                 ADRuleKind::Transpose,
             )),
-            Op::EmitMissing => panic!("EmitMissing is linearized before transpose"),
+            Op::EmitMissing => panic!("EmitMissing is linearized before linear_transpose"),
         }
+    }
+}
+
+#[derive(Default)]
+struct TestEmitter {
+    next_id: LocalValId,
+}
+
+impl TestEmitter {
+    fn add_input(&mut self) -> LocalValId {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+}
+
+impl PrimitiveBuilder<Op> for TestEmitter {
+    fn add_primitive(
+        &mut self,
+        op: Op,
+        _inputs: Vec<PrimitiveValue<Op>>,
+        _mode: OpMode,
+    ) -> Vec<LocalValId> {
+        (0..op.n_outputs()).map(|_| self.add_input()).collect()
     }
 }
 
@@ -208,8 +232,8 @@ fn try_linear_transpose_propagates_transpose_error() {
 #[test]
 fn try_linear_transpose_with_builder_propagates_transpose_error() {
     let linear = linearized_graph_with_missing_op();
-    let mut emitter = computegraph::fragment::FragmentBuilder::<Op>::new();
-    let seed = emitter.add_input(Key::Base("ct"));
+    let mut emitter = TestEmitter::default();
+    let seed = emitter.add_input();
     let mut ctx = ();
 
     let err = try_linear_transpose_with_builder(&linear, &mut emitter, &[Some(seed)], &mut ctx)

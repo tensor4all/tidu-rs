@@ -10,7 +10,7 @@ use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp};
 use num_complex::Complex64;
-use tidu::{differentiate, transpose};
+use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
@@ -268,7 +268,7 @@ fn finite_difference_loss(
 #[test]
 fn jvp_conj_z() {
     let (primal, y_key) = build_conj_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -291,7 +291,7 @@ fn jvp_conj_z() {
 #[test]
 fn vjp_conj_z() {
     let (primal, y_key) = build_conj_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -299,7 +299,7 @@ fn vjp_conj_z() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -315,7 +315,7 @@ fn vjp_conj_z() {
 #[test]
 fn jvp_z_times_w() {
     let (primal, y_key) = build_z_times_w();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z"), ck("w")],
@@ -348,7 +348,7 @@ fn jvp_z_times_w() {
 #[test]
 fn vjp_c_times_z_uses_conjugated_constant() {
     let (primal, y_key) = build_c_times_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -356,7 +356,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -376,7 +376,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
 #[test]
 fn vjp_abs_squared_returns_two_z() {
     let (primal, y_key) = build_abs_squared();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -384,7 +384,7 @@ fn vjp_abs_squared_returns_two_z() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -401,7 +401,7 @@ fn vjp_abs_squared_returns_two_z() {
 #[test]
 fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
     let (primal, y_key) = build_exp_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -409,7 +409,7 @@ fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let transposed_fragment = Arc::new(transposed.into_graph());

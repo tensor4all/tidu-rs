@@ -1,14 +1,16 @@
 #[allow(unused_imports)]
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
+use computegraph::types::{GlobalValKey, LocalValId, OpMode};
+#[allow(unused_imports)]
+use tidu::PrimitiveValue;
 
 #[macro_export]
 macro_rules! linearize_add {
     ($builder:expr, $OpAdd:path, $t0:expr, $t1:expr) => {
         match ($t0, $t1) {
             (Some(dx), Some(dy)) => {
-                let out = $builder.add_op(
+                let out = $builder.add_primitive(
                     $OpAdd,
-                    vec![ValRef::Local(dx), ValRef::Local(dy)],
+                    vec![PrimitiveValue::Local(dx), PrimitiveValue::Local(dy)],
                     OpMode::Linear {
                         active_mask: vec![true, true],
                     },
@@ -27,9 +29,12 @@ macro_rules! linearize_mul {
     ($builder:expr, $OpMul:path, $OpAdd:path, $primal_in:expr, $t0:expr, $t1:expr) => {{
         let mut terms = Vec::new();
         if let Some(dx) = $t0 {
-            let term = $builder.add_op(
+            let term = $builder.add_primitive(
                 $OpMul,
-                vec![ValRef::Local(dx), ValRef::External($primal_in[1].clone())],
+                vec![
+                    PrimitiveValue::Local(dx),
+                    PrimitiveValue::External($primal_in[1].clone()),
+                ],
                 OpMode::Linear {
                     active_mask: vec![true, false],
                 },
@@ -37,9 +42,12 @@ macro_rules! linearize_mul {
             terms.push(term[0]);
         }
         if let Some(dy) = $t1 {
-            let term = $builder.add_op(
+            let term = $builder.add_primitive(
                 $OpMul,
-                vec![ValRef::External($primal_in[0].clone()), ValRef::Local(dy)],
+                vec![
+                    PrimitiveValue::External($primal_in[0].clone()),
+                    PrimitiveValue::Local(dy),
+                ],
                 OpMode::Linear {
                     active_mask: vec![false, true],
                 },
@@ -50,9 +58,9 @@ macro_rules! linearize_mul {
             [] => vec![None],
             [only] => vec![Some(*only)],
             [lhs, rhs] => {
-                let sum = $builder.add_op(
+                let sum = $builder.add_primitive(
                     $OpAdd,
-                    vec![ValRef::Local(*lhs), ValRef::Local(*rhs)],
+                    vec![PrimitiveValue::Local(*lhs), PrimitiveValue::Local(*rhs)],
                     OpMode::Linear {
                         active_mask: vec![true, true],
                     },
@@ -69,9 +77,12 @@ macro_rules! linearize_exp {
     ($builder:expr, $OpMul:path, $primal_out:expr, $t0:expr) => {
         match $t0 {
             Some(dx) => {
-                let out = $builder.add_op(
+                let out = $builder.add_primitive(
                     $OpMul,
-                    vec![ValRef::External($primal_out.clone()), ValRef::Local(dx)],
+                    vec![
+                        PrimitiveValue::External($primal_out.clone()),
+                        PrimitiveValue::Local(dx),
+                    ],
                     OpMode::Linear {
                         active_mask: vec![false, true],
                     },
@@ -88,9 +99,9 @@ macro_rules! linearize_neg {
     ($builder:expr, $OpNeg:path, $t0:expr) => {
         match $t0 {
             Some(dx) => {
-                let out = $builder.add_op(
+                let out = $builder.add_primitive(
                     $OpNeg,
-                    vec![ValRef::Local(dx)],
+                    vec![PrimitiveValue::Local(dx)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -107,9 +118,9 @@ macro_rules! linearize_conj {
     ($builder:expr, $OpConj:path, $t0:expr) => {
         match $t0 {
             Some(dx) => {
-                let out = $builder.add_op(
+                let out = $builder.add_primitive(
                     $OpConj,
-                    vec![ValRef::Local(dx)],
+                    vec![PrimitiveValue::Local(dx)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },

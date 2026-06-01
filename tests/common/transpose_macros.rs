@@ -1,5 +1,7 @@
 #[allow(unused_imports)]
-use computegraph::types::{OpMode, ValRef};
+use computegraph::types::OpMode;
+#[allow(unused_imports)]
+use tidu::PrimitiveValue;
 
 #[macro_export]
 macro_rules! transpose_add {
@@ -17,9 +19,9 @@ macro_rules! transpose_mul_real {
         };
         let mut result = vec![None, None];
         if active_mask[0] {
-            let out = $builder.add_op(
+            let out = $builder.add_primitive(
                 $OpMul,
-                vec![$inputs[1].clone(), ValRef::Local($ct)],
+                vec![$inputs[1].clone(), PrimitiveValue::Local($ct)],
                 OpMode::Linear {
                     active_mask: vec![false, true],
                 },
@@ -27,9 +29,9 @@ macro_rules! transpose_mul_real {
             result[0] = Some(out[0]);
         }
         if active_mask[1] {
-            let out = $builder.add_op(
+            let out = $builder.add_primitive(
                 $OpMul,
-                vec![$inputs[0].clone(), ValRef::Local($ct)],
+                vec![$inputs[0].clone(), PrimitiveValue::Local($ct)],
                 OpMode::Linear {
                     active_mask: vec![false, true],
                 },
@@ -49,16 +51,19 @@ macro_rules! transpose_mul_complex {
         };
         let mut result = vec![None, None];
         if active_mask[0] {
-            let conj_fixed = $builder.add_op(
+            let conj_fixed = $builder.add_primitive(
                 $OpConj,
                 vec![$inputs[1].clone()],
                 OpMode::Linear {
                     active_mask: vec![false],
                 },
             );
-            let out = $builder.add_op(
+            let out = $builder.add_primitive(
                 $OpMul,
-                vec![ValRef::Local(conj_fixed[0]), ValRef::Local($ct)],
+                vec![
+                    PrimitiveValue::Local(conj_fixed[0]),
+                    PrimitiveValue::Local($ct),
+                ],
                 OpMode::Linear {
                     active_mask: vec![false, true],
                 },
@@ -66,16 +71,19 @@ macro_rules! transpose_mul_complex {
             result[0] = Some(out[0]);
         }
         if active_mask[1] {
-            let conj_fixed = $builder.add_op(
+            let conj_fixed = $builder.add_primitive(
                 $OpConj,
                 vec![$inputs[0].clone()],
                 OpMode::Linear {
                     active_mask: vec![false],
                 },
             );
-            let out = $builder.add_op(
+            let out = $builder.add_primitive(
                 $OpMul,
-                vec![ValRef::Local(conj_fixed[0]), ValRef::Local($ct)],
+                vec![
+                    PrimitiveValue::Local(conj_fixed[0]),
+                    PrimitiveValue::Local($ct),
+                ],
                 OpMode::Linear {
                     active_mask: vec![false, true],
                 },
@@ -89,9 +97,9 @@ macro_rules! transpose_mul_complex {
 #[macro_export]
 macro_rules! transpose_neg {
     ($builder:expr, $OpNeg:path, $ct:expr) => {{
-        let out = $builder.add_op(
+        let out = $builder.add_primitive(
             $OpNeg,
-            vec![ValRef::Local($ct)],
+            vec![PrimitiveValue::Local($ct)],
             OpMode::Linear {
                 active_mask: vec![true],
             },
@@ -103,9 +111,9 @@ macro_rules! transpose_neg {
 #[macro_export]
 macro_rules! transpose_conj {
     ($builder:expr, $OpConj:path, $ct:expr) => {{
-        let out = $builder.add_op(
+        let out = $builder.add_primitive(
             $OpConj,
-            vec![ValRef::Local($ct)],
+            vec![PrimitiveValue::Local($ct)],
             OpMode::Linear {
                 active_mask: vec![true],
             },

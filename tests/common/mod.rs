@@ -3,13 +3,12 @@ use std::sync::Arc;
 
 use computegraph::compile::compile;
 use computegraph::fragment::Fragment;
-use computegraph::fragment::FragmentBuilder;
 use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
-use tidu::LinearFragment;
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use computegraph::types::{GlobalValKey, LocalValId, OpMode};
+use computegraph::{EvalGraphOp, GraphOp};
+use tidu::LinearizedGraph;
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 use crate::{
     define_ad_key, linearize_add, linearize_exp, linearize_mul, linearize_neg, transpose_add,
@@ -55,16 +54,16 @@ impl EvalGraphOp for ScalarOp {
     }
 }
 
-impl PrimitiveOp for ScalarOp {
+impl Primitive for ScalarOp {
     type ADContext = ();
 
     fn add() -> Self {
         ScalarOp::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -89,9 +88,9 @@ impl PrimitiveOp for ScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -115,7 +114,7 @@ pub fn evaluate<Op>(
     bindings: &[(GlobalValKey<Op>, Op::Operand)],
 ) -> Vec<Op::Operand>
 where
-    Op: PrimitiveOp + EvalGraphOp,
+    Op: Primitive + EvalGraphOp,
     Op::Context: Default,
     Op::InputKey: ADKey,
 {
@@ -137,21 +136,24 @@ where
     program.eval(&mut Default::default(), &ordered_refs)
 }
 
-pub fn tangent_input_key<Op>(linear: &LinearFragment<Op>, index: usize) -> GlobalValKey<Op>
+pub fn tangent_input_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> GlobalValKey<Op>
 where
-    Op: PrimitiveOp,
+    Op: Primitive,
     Op::InputKey: ADKey,
 {
-    let local_id = linear.tangent_inputs[index].1;
-    linear.fragment.vals()[local_id].key.clone()
+    let local_id = linear.tangent_inputs()[index].1;
+    linear.as_graph().vals()[local_id].key.clone()
 }
 
-pub fn tangent_output_key<Op>(linear: &LinearFragment<Op>, index: usize) -> Option<GlobalValKey<Op>>
+pub fn tangent_output_key<Op>(
+    linear: &LinearizedGraph<Op>,
+    index: usize,
+) -> Option<GlobalValKey<Op>>
 where
-    Op: PrimitiveOp,
+    Op: Primitive,
     Op::InputKey: ADKey,
 {
-    linear.tangent_outputs[index].map(|local_id| linear.fragment.vals()[local_id].key.clone())
+    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().vals()[local_id].key.clone())
 }
 
 pub mod assertions;

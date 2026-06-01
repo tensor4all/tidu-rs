@@ -10,11 +10,11 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
+use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
-use tidu::{differentiate, transpose};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use tidu::{linear_transpose, linearize};
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
@@ -75,16 +75,16 @@ impl EvalGraphOp for ExtScalarOp {
     }
 }
 
-impl PrimitiveOp for ExtScalarOp {
+impl Primitive for ExtScalarOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -105,23 +105,29 @@ impl PrimitiveOp for ExtScalarOp {
             Self::Neg => linearize_neg!(builder, ExtScalarOp::Neg, tangent_in[0]),
             Self::SinCos => match tangent_in[0] {
                 Some(dx) => {
-                    let d_sin = builder.add_op(
+                    let d_sin = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::External(primal_out[1].clone()), ValRef::Local(dx)],
+                        vec![
+                            PrimitiveValue::External(primal_out[1].clone()),
+                            PrimitiveValue::Local(dx),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![false, true],
                         },
                     );
-                    let sin_times_dx = builder.add_op(
+                    let sin_times_dx = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::External(primal_out[0].clone()), ValRef::Local(dx)],
+                        vec![
+                            PrimitiveValue::External(primal_out[0].clone()),
+                            PrimitiveValue::Local(dx),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![false, true],
                         },
                     );
-                    let d_cos = builder.add_op(
+                    let d_cos = builder.add_primitive(
                         Self::Neg,
-                        vec![ValRef::Local(sin_times_dx[0])],
+                        vec![PrimitiveValue::Local(sin_times_dx[0])],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -135,9 +141,9 @@ impl PrimitiveOp for ExtScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -306,16 +312,16 @@ impl EvalGraphOp for VectorOp {
     }
 }
 
-impl PrimitiveOp for VectorOp {
+impl Primitive for VectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -339,9 +345,9 @@ impl PrimitiveOp for VectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -512,16 +518,16 @@ impl EvalGraphOp for ComplexVectorOp {
     }
 }
 
-impl PrimitiveOp for ComplexVectorOp {
+impl Primitive for ComplexVectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -546,12 +552,12 @@ impl PrimitiveOp for ComplexVectorOp {
             Self::Conj => linearize_conj!(builder, ComplexVectorOp::Conj, tangent_in[0]),
             Self::ReduceSum { axes, input_shape } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::ReduceSum {
                             axes: axes.clone(),
                             input_shape: input_shape.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -562,12 +568,12 @@ impl PrimitiveOp for ComplexVectorOp {
             },
             Self::BroadcastInDim { shape, dims } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::BroadcastInDim {
                             shape: shape.clone(),
                             dims: dims.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -581,9 +587,9 @@ impl PrimitiveOp for ComplexVectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -611,12 +617,12 @@ impl PrimitiveOp for ComplexVectorOp {
                 let dims = (0..input_shape.len())
                     .filter(|axis| !axes.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     Self::BroadcastInDim {
                         shape: input_shape.clone(),
                         dims,
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -627,12 +633,12 @@ impl PrimitiveOp for ComplexVectorOp {
                 let axes = (0..shape.len())
                     .filter(|axis| !dims.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     Self::ReduceSum {
                         axes,
                         input_shape: shape.clone(),
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -748,7 +754,7 @@ fn build_complex_vector_abs_squared() -> (
 #[test]
 fn multi_output_sincos_jvp_sum_matches_expected() {
     let (primal, _sin_key, _cos_key, sum_key) = build_sincos_sum();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&sum_key),
         &[sk("x")],
@@ -761,7 +767,7 @@ fn multi_output_sincos_jvp_sum_matches_expected() {
     let dx_key = tangent_input_key(&linear, 0);
     let x = 1.0;
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[sum_key, dy_key],
         &[(ext_input_key("x"), x), (dx_key, 1.0)],
     );
@@ -773,7 +779,7 @@ fn multi_output_sincos_jvp_sum_matches_expected() {
 #[test]
 fn multi_output_sincos_vjp_matches_expected() {
     let (primal, sin_key, cos_key, _sum_key) = build_sincos_sum();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         &[sin_key.clone(), cos_key.clone()],
         &[sk("x")],
@@ -781,14 +787,14 @@ fn multi_output_sincos_vjp_matches_expected() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_sin_key = tangent_input_key(&transposed, 0);
     let ct_cos_key = tangent_input_key(&transposed, 1);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let x = 1.0;
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (ext_input_key("x"), x),
@@ -803,7 +809,7 @@ fn multi_output_sincos_vjp_matches_expected() {
 #[test]
 fn multi_output_sincos_adjoint_consistency() {
     let (primal, sin_key, cos_key, _sum_key) = build_sincos_sum();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         &[sin_key.clone(), cos_key.clone()],
         &[sk("x")],
@@ -814,8 +820,8 @@ fn multi_output_sincos_adjoint_consistency() {
     let dy_sin_key = tangent_output_key(&linear, 0).expect("active tangent output for sin");
     let dy_cos_key = tangent_output_key(&linear, 1).expect("active tangent output for cos");
     let dx_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let transposed = linear_transpose(&linear, &mut ());
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let x = 1.0;
     let dx = 0.4;
@@ -831,7 +837,7 @@ fn multi_output_sincos_adjoint_consistency() {
     let ct_cos_key = tangent_input_key(&transposed, 1);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_x = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (ext_input_key("x"), x),
@@ -854,7 +860,7 @@ fn deep_chain_exp_10x() {
     let dx = 0.7;
     let ct_y = -0.4;
     let (primal, y_key) = build_scaled_exp_chain(depth);
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -864,8 +870,8 @@ fn deep_chain_exp_10x() {
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let transposed = linear_transpose(&linear, &mut ());
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -879,7 +885,7 @@ fn deep_chain_exp_10x() {
         ],
     )[0];
     let ct_x = evaluate(
-        vec![primal.clone(), Arc::new(transposed.fragment)],
+        vec![primal.clone(), Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (scalar_input_key("x"), x),
@@ -912,7 +918,7 @@ fn deep_chain_exp_10x() {
 #[test]
 fn third_order_x_cubed() {
     let (primal, y_key) = build_x_cubed();
-    let linear_1 = differentiate(
+    let linear_1 = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -922,9 +928,9 @@ fn third_order_x_cubed() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
         std::slice::from_ref(&dy_key),
         &[sk("x")],
@@ -934,9 +940,9 @@ fn third_order_x_cubed() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
-    let linear_3 = differentiate(
+    let linear_3 = linearize(
         &resolve(vec![
             primal.clone(),
             linear_1_fragment.clone(),
@@ -956,7 +962,7 @@ fn third_order_x_cubed() {
             primal,
             linear_1_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d3y_key],
         &[
@@ -973,7 +979,7 @@ fn third_order_x_cubed() {
 #[test]
 fn fourth_order_x_fourth() {
     let (primal, y_key) = build_x_fourth();
-    let linear_1 = differentiate(
+    let linear_1 = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -983,9 +989,9 @@ fn fourth_order_x_fourth() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
         std::slice::from_ref(&dy_key),
         &[sk("x")],
@@ -995,9 +1001,9 @@ fn fourth_order_x_fourth() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
-    let linear_3 = differentiate(
+    let linear_3 = linearize(
         &resolve(vec![
             primal.clone(),
             linear_1_fragment.clone(),
@@ -1011,9 +1017,9 @@ fn fourth_order_x_fourth() {
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
-    let linear_3_fragment = Arc::new(linear_3.fragment);
+    let linear_3_fragment = Arc::new(linear_3.into_graph());
 
-    let linear_4 = differentiate(
+    let linear_4 = linearize(
         &resolve(vec![
             primal.clone(),
             linear_1_fragment.clone(),
@@ -1035,7 +1041,7 @@ fn fourth_order_x_fourth() {
             linear_1_fragment,
             linear_2_fragment,
             linear_3_fragment,
-            Arc::new(linear_4.fragment),
+            Arc::new(linear_4.into_graph()),
         ],
         &[d4y_key],
         &[
@@ -1053,7 +1059,7 @@ fn fourth_order_x_fourth() {
 #[test]
 fn third_order_for_then_f() {
     let (primal, y_key) = build_exp_x();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[sk("x")],
@@ -1061,12 +1067,12 @@ fn third_order_for_then_f() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_key = tangent_input_key(&transposed, 0);
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
         std::slice::from_ref(&ct_x_key),
         &[sk("x")],
@@ -1076,9 +1082,9 @@ fn third_order_for_then_f() {
     );
     let d_ct_x_key = tangent_output_key(&linear_2, 0).expect("active forward-over-reverse output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
-    let linear_3 = differentiate(
+    let linear_3 = linearize(
         &resolve(vec![
             primal.clone(),
             transposed_fragment.clone(),
@@ -1098,7 +1104,7 @@ fn third_order_for_then_f() {
             primal,
             transposed_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d2_ct_x_key],
         &[
@@ -1119,7 +1125,7 @@ fn fofof_vector_x_cubed() {
     // f'' = 6x    -> with dx2=[1,1]: [12, 18]
     // f'''= 6     -> with dx3=[1,1]: [6, 6]
     let (primal, y_key) = build_vector_x_cubed();
-    let linear_1 = differentiate(
+    let linear_1 = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -1129,9 +1135,9 @@ fn fofof_vector_x_cubed() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
         std::slice::from_ref(&dy_key),
         &[vk("x")],
@@ -1141,9 +1147,9 @@ fn fofof_vector_x_cubed() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
-    let linear_3 = differentiate(
+    let linear_3 = linearize(
         &resolve(vec![
             primal.clone(),
             linear_1_fragment.clone(),
@@ -1163,7 +1169,7 @@ fn fofof_vector_x_cubed() {
             primal,
             linear_1_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d3y_key],
         &[
@@ -1182,14 +1188,14 @@ fn fof_vector_adjoint_consistency() {
     // f(x) = exp(x) elementwise, x = [1.0, 2.0]
     // FoF with dx1=[0.3, 0.7], dx2=[0.5, 0.4]:
     // d2(exp(x))*dx1*dx2 = exp(x)*dx1*dx2 = [exp(1)*0.15, exp(2)*0.28]
-    // FoR uses ct_y = dx2, then differentiates the cotangent output along dx1.
+    // FoR uses ct_y = dx2, then linearizes the cotangent output along dx1.
     let x = vector(&[1.0, 2.0]);
     let dx1 = vector(&[0.3, 0.7]);
     let dx2 = vector(&[0.5, 0.4]);
     let expected = vector(&[1.0_f64.exp() * 0.15, 2.0_f64.exp() * 0.28]);
 
     let (primal, y_key) = build_vector_exp_x();
-    let linear_1 = differentiate(
+    let linear_1 = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -1199,10 +1205,10 @@ fn fof_vector_adjoint_consistency() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_fof_key = tangent_input_key(&linear_1, 0);
-    let transposed = transpose(&linear_1, &mut ());
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let transposed = linear_transpose(&linear_1, &mut ());
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
-    let linear_2 = differentiate(
+    let linear_2 = linearize(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
         std::slice::from_ref(&dy_key),
         &[vk("x")],
@@ -1216,7 +1222,7 @@ fn fof_vector_adjoint_consistency() {
         vec![
             primal.clone(),
             linear_1_fragment,
-            Arc::new(linear_2.fragment),
+            Arc::new(linear_2.into_graph()),
         ],
         &[d2y_key],
         &[
@@ -1229,8 +1235,8 @@ fn fof_vector_adjoint_consistency() {
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
-    let transposed_fragment = Arc::new(transposed.fragment);
-    let linear_3 = differentiate(
+    let transposed_fragment = Arc::new(transposed.into_graph());
+    let linear_3 = linearize(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
         std::slice::from_ref(&ct_x_key),
         &[vk("x")],
@@ -1241,7 +1247,7 @@ fn fof_vector_adjoint_consistency() {
     let d_ct_x_key = tangent_output_key(&linear_3, 0).expect("active forward-over-reverse output");
     let dx1_for_key = tangent_input_key(&linear_3, 0);
     let for_result = evaluate(
-        vec![primal, transposed_fragment, Arc::new(linear_3.fragment)],
+        vec![primal, transposed_fragment, Arc::new(linear_3.into_graph())],
         &[d_ct_x_key],
         &[
             (vector_input_key("x"), x),
@@ -1259,7 +1265,7 @@ fn fof_vector_adjoint_consistency() {
 #[test]
 fn complex_vector_jvp_conj_elementwise() {
     let (primal, y_key) = build_complex_vector_conj();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[cvk("z")],
@@ -1273,7 +1279,7 @@ fn complex_vector_jvp_conj_elementwise() {
     let z = cvector(&[Complex64::new(1.0, 1.0), Complex64::new(2.0, 3.0)]);
     let dz = cvector(&[Complex64::new(0.5, 0.3), Complex64::new(0.7, 0.1)]);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[(complex_vector_input_key("z"), z), (dz_key, dz.clone())],
     );
@@ -1288,7 +1294,7 @@ fn complex_vector_jvp_conj_elementwise() {
 #[test]
 fn complex_vector_vjp_sum_abs_squared() {
     let (primal, y_key) = build_complex_vector_sum_abs_squared();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[cvk("z")],
@@ -1296,13 +1302,13 @@ fn complex_vector_vjp_sum_abs_squared() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let z = cvector(&[Complex64::new(1.0, 1.0), Complex64::new(2.0, 3.0)]);
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[
             (complex_vector_input_key("z"), z),
@@ -1320,7 +1326,7 @@ fn complex_vector_vjp_sum_abs_squared() {
 #[test]
 fn complex_vector_adjoint_consistency() {
     let (primal, y_key) = build_complex_vector_abs_squared();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[cvk("z")],
@@ -1330,8 +1336,8 @@ fn complex_vector_adjoint_consistency() {
     );
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
-    let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let transposed = linear_transpose(&linear, &mut ());
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let z = cvector(&[Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0)]);
     let dz = cvector(&[Complex64::new(0.2, -0.4), Complex64::new(-0.1, 0.3)]);
@@ -1349,7 +1355,7 @@ fn complex_vector_adjoint_consistency() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_z = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(complex_vector_input_key("z"), z), (ct_y_key, ct_y.clone())],
     )[0]

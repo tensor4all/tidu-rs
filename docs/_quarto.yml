@@ -1,0 +1,76 @@
+project:
+  type: website
+  output-dir: ../target/docs-site/design
+  render:
+    - index.md
+    - getting-started/*.md
+    - tutorials/*.md
+    - guides/*.md
+    - architecture/*.md
+    - api/*.md
+    - internals/*.md
+    - design/*.md
+
+website:
+  title: "tidu-rs"
+  sidebar:
+    style: docked
+    search: true
+    contents:
+      - text: "Overview"
+        href: index.md
+      - section: "Getting Started"
+        contents:
+          - text: "Start Here"
+            href: getting-started/index.md
+          - text: "Terminology"
+            href: getting-started/terminology.md
+      - section: "Tutorials"
+        contents:
+          - text: "Tutorials"
+            href: tutorials/index.md
+          - text: "Primitive Linearization"
+            href: tutorials/primitive-linearization.md
+          - text: "Eager Reverse Mode"
+            href: tutorials/eager-reverse-mode.md
+      - section: "Guides"
+        contents:
+          - text: "Implementing Primitives"
+            href: guides/implementing-primitives.md
+          - text: "Linearize And Transpose"
+            href: guides/linearize-and-transpose.md
+          - text: "Eager Integration"
+            href: guides/eager-integration.md
+          - text: "Complex AD"
+            href: guides/complex-ad.md
+          - text: "Higher-Order AD"
+            href: guides/higher-order-ad.md
+      - section: "Architecture"
+        contents:
+          - text: "Architecture"
+            href: architecture/index.md
+          - text: "Public Boundaries"
+            href: architecture/public-boundaries.md
+          - text: "Computegraph Integration"
+            href: architecture/computegraph-integration.md
+      - section: "API"
+        contents:
+          - text: "API Map"
+            href: api/index.md
+      - section: "Internals"
+        contents:
+          - text: "Internals"
+            href: internals/index.md
+      - section: "Design Documents"
+        contents:
+          - text: "JAX Terminology"
+            href: design/jax-terminology-docs.md
+          - text: "Eager API Boundary"
+            href: design/eager-api-boundary.md
+
+format:
+  html:
+    theme: flatly
+    toc: true
+    code-overflow: wrap
+    html-math-method: katex

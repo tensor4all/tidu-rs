@@ -8,10 +8,10 @@ use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
+use computegraph::{EvalGraphOp, GraphOp};
 use num_complex::Complex64;
-use tidu::{differentiate, transpose};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use tidu::{linear_transpose, linearize};
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
@@ -77,16 +77,16 @@ impl EvalGraphOp for ComplexScalarOp {
     }
 }
 
-impl PrimitiveOp for ComplexScalarOp {
+impl Primitive for ComplexScalarOp {
     type ADContext = ();
 
     fn add() -> Self {
         ComplexScalarOp::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -114,9 +114,9 @@ impl PrimitiveOp for ComplexScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -268,7 +268,7 @@ fn finite_difference_loss(
 #[test]
 fn jvp_conj_z() {
     let (primal, y_key) = build_conj_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -280,7 +280,7 @@ fn jvp_conj_z() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[(input_key("z"), c(2.0, -3.0)), (dz_key, c(1.0, 1.0))],
     );
@@ -291,7 +291,7 @@ fn jvp_conj_z() {
 #[test]
 fn vjp_conj_z() {
     let (primal, y_key) = build_conj_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -299,12 +299,12 @@ fn vjp_conj_z() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(input_key("z"), c(-0.5, 0.75)), (ct_y_key, c(1.0, 1.0))],
     );
@@ -315,7 +315,7 @@ fn vjp_conj_z() {
 #[test]
 fn jvp_z_times_w() {
     let (primal, y_key) = build_z_times_w();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z"), ck("w")],
@@ -332,7 +332,7 @@ fn jvp_z_times_w() {
     let dz = Complex64::new(0.5, -1.0);
     let dw = Complex64::new(-2.0, 1.5);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("z"), C64(z)),
@@ -348,7 +348,7 @@ fn jvp_z_times_w() {
 #[test]
 fn vjp_c_times_z_uses_conjugated_constant() {
     let (primal, y_key) = build_c_times_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -356,12 +356,12 @@ fn vjp_c_times_z_uses_conjugated_constant() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[
             (input_key("c"), c(2.0, 1.0)),
@@ -376,7 +376,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
 #[test]
 fn vjp_abs_squared_returns_two_z() {
     let (primal, y_key) = build_abs_squared();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -384,13 +384,13 @@ fn vjp_abs_squared_returns_two_z() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let z = Complex64::new(1.0, 2.0);
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(input_key("z"), C64(z)), (ct_y_key, c(1.0, 0.0))],
     );
@@ -401,7 +401,7 @@ fn vjp_abs_squared_returns_two_z() {
 #[test]
 fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
     let (primal, y_key) = build_exp_z();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[ck("z")],
@@ -409,10 +409,10 @@ fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
 
     let z = Complex64::new(0.4, -0.2);
     for seed in [Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)] {

@@ -1,23 +1,20 @@
-use computegraph::fragment::FragmentBuilder;
-use computegraph::{GlobalValKey, GraphOp, LocalValId, OpEmitter, OpMode, ValRef};
+use super::{ADKey, ADRuleResult, PrimitiveBuilder, PrimitiveValue};
+use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 
-use super::{ADKey, ADRuleResult};
-
-/// Extends `GraphOp` with linearization and transpose rules for AD.
+/// Extends `GraphOp` with primitive JVP and transpose rules for AD.
 ///
-/// - `try_linearize` is called by [`crate::try_differentiate`]
-/// - `try_transpose_rule` is called by [`crate::try_transpose`]
+/// - `try_jvp_rule` is called by [`crate::try_linearize`]
+/// - `try_linear_transpose_rule` is called by [`crate::try_linear_transpose`]
 ///
-/// Both methods emit new ops into a `FragmentBuilder`. The downstream
+/// Both methods emit new primitive applications through a [`PrimitiveBuilder`]. The downstream
 /// implementor is responsible for ensuring closure: every op emitted must also
-/// implement `PrimitiveOp`.
+/// implement `Primitive`.
 ///
 /// # Examples
 ///
 /// ```
-/// use computegraph::fragment::FragmentBuilder;
-/// use computegraph::{GlobalValKey, GraphOp, LocalValId, OpEmitter, OpMode, ValRef};
-/// use tidu::{ADKey, DiffPassId, PrimitiveOp};
+/// use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
+/// use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 ///
 /// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// enum Key { Base(String), Tan(Box<Key>, DiffPassId) }
@@ -37,12 +34,12 @@ use super::{ADKey, ADRuleResult};
 ///     fn n_outputs(&self) -> usize { 1 }
 /// }
 ///
-/// impl PrimitiveOp for AddOp {
+/// impl Primitive for AddOp {
 ///     type ADContext = ();
 ///
 ///     fn add() -> Self { AddOp }
-///     fn linearize(
-///         &self, _b: &mut FragmentBuilder<Self>,
+///     fn jvp_rule(
+///         &self, _b: &mut impl PrimitiveBuilder<Self>,
 ///         _pi: &[GlobalValKey<Self>], _po: &[GlobalValKey<Self>],
 ///         t: &[Option<LocalValId>],
 ///         _ctx: &mut (),
@@ -50,101 +47,98 @@ use super::{ADKey, ADRuleResult};
 ///         vec![t[0].or(t[1])]
 ///     }
 ///     fn transpose_rule(
-///         &self, _emitter: &mut impl OpEmitter<Self>,
-///         ct: &[Option<LocalValId>], _i: &[ValRef<Self>], _m: &OpMode,
+///         &self, _builder: &mut impl PrimitiveBuilder<Self>,
+///         ct: &[Option<LocalValId>], _i: &[PrimitiveValue<Self>], _m: &OpMode,
 ///         _ctx: &mut (),
 ///     ) -> Vec<Option<LocalValId>> {
 ///         vec![ct[0], ct[0]]
 ///     }
 /// }
 /// ```
-pub trait PrimitiveOp: GraphOp
+pub trait Primitive: GraphOp
 where
     Self::InputKey: ADKey,
 {
-    /// Runtime AD context threaded through linearization and transpose.
+    /// Runtime AD context threaded through linearization and transposition.
     ///
     /// This can carry information such as concrete shapes or guard decisions
     /// that influence how AD rules emit graph structure.
     type ADContext: Default;
 
     /// Returns the addition operation used for cotangent accumulation
-    /// in [`crate::transpose`]. When multiple cotangents flow to the same
-    /// `GlobalValKey`, transpose emits `Op::add()` nodes to sum them.
+    /// in [`crate::linear_transpose`]. When multiple cotangents flow to the same
+    /// `GlobalValKey`, `linear_transpose` emits `Op::add()` nodes to sum them.
     fn add() -> Self
     where
         Self: Sized;
 
-    /// Emit the linear (JVP) rule for this primitive.
+    /// Emit the JVP rule for this primitive.
     ///
     /// Must be linear in tangent inputs. May reference primal inputs/outputs
     /// through `External(GlobalValKey)`. Must emit ops in `OpMode::Linear`.
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        builder: &mut impl PrimitiveBuilder<Self>,
+        primal_inputs: &[GlobalValKey<Self>],
+        primal_outputs: &[GlobalValKey<Self>],
+        tangent_inputs: &[Option<LocalValId>],
         ctx: &mut Self::ADContext,
     ) -> Vec<Option<LocalValId>>
     where
         Self: Sized;
 
-    /// Fallible variant of [`PrimitiveOp::linearize`].
+    /// Fallible variant of [`Primitive::jvp_rule`].
     ///
     /// Implementors that can encounter missing extension rules should override
     /// this method and return [`super::ADRuleError`] instead of panicking. The
     /// default implementation preserves the infallible contract for existing
     /// primitive sets.
-    fn try_linearize(
+    fn try_jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        builder: &mut impl PrimitiveBuilder<Self>,
+        primal_inputs: &[GlobalValKey<Self>],
+        primal_outputs: &[GlobalValKey<Self>],
+        tangent_inputs: &[Option<LocalValId>],
         ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValId>>>
     where
         Self: Sized,
     {
-        Ok(self.linearize(builder, primal_in, primal_out, tangent_in, ctx))
+        Ok(self.jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx))
     }
 
     /// Emit the transpose rule for this linear primitive.
     ///
     /// Receives cotangent outputs and produces cotangent inputs.
-    /// Must only emit ops that themselves implement `PrimitiveOp`.
-    ///
-    /// Uses `OpEmitter` instead of `FragmentBuilder` to enable both
-    /// graph-building and eager execution.
+    /// Must only emit ops that themselves implement `Primitive`.
     fn transpose_rule(
         &self,
-        emitter: &mut impl OpEmitter<Self>,
-        cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        builder: &mut impl PrimitiveBuilder<Self>,
+        cotangent_outputs: &[Option<LocalValId>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         ctx: &mut Self::ADContext,
     ) -> Vec<Option<LocalValId>>
     where
         Self: Sized;
 
-    /// Fallible variant of [`PrimitiveOp::transpose_rule`].
+    /// Fallible variant of [`Primitive::transpose_rule`].
     ///
     /// Implementors that can encounter missing extension rules should override
     /// this method and return [`super::ADRuleError`] instead of panicking. The
     /// default implementation preserves the infallible contract for existing
     /// primitive sets.
-    fn try_transpose_rule(
+    fn try_linear_transpose_rule(
         &self,
-        emitter: &mut impl OpEmitter<Self>,
-        cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        builder: &mut impl PrimitiveBuilder<Self>,
+        cotangent_outputs: &[Option<LocalValId>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValId>>>
     where
         Self: Sized,
     {
-        Ok(self.transpose_rule(emitter, cotangent_out, inputs, mode, ctx))
+        Ok(self.transpose_rule(builder, cotangent_outputs, inputs, mode, ctx))
     }
 }

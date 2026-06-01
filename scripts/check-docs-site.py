@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
+import subprocess
 import sys
-import tomllib
 from html.parser import HTMLParser
+from typing import Optional
 
 
 class LinkCollector(HTMLParser):
@@ -14,7 +16,7 @@ class LinkCollector(HTMLParser):
         super().__init__()
         self.links: set[str] = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
         if tag != "a":
             return
         href = dict(attrs).get("href") or ""
@@ -34,24 +36,33 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_workspace_libs(root: pathlib.Path) -> list[tuple[str, str, str]]:
-    with (root / "Cargo.toml").open("rb") as handle:
-        cargo = tomllib.load(handle)
-
-    if "workspace" in cargo and "members" in cargo["workspace"]:
-        members = cargo["workspace"]["members"]
-    else:
-        members = ["."]
+    metadata = json.loads(
+        subprocess.run(
+            [
+                "cargo",
+                "metadata",
+                "--no-deps",
+                "--format-version",
+                "1",
+                "--manifest-path",
+                str(root / "Cargo.toml"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    workspace_members = set(metadata["workspace_members"])
 
     crates: list[tuple[str, str, str]] = []
-    for member in members:
-        member_path = root / member
-        with (member_path / "Cargo.toml").open("rb") as handle:
-            manifest = tomllib.load(handle)
-        if "package" not in manifest:
+    for package in metadata["packages"]:
+        if package["id"] not in workspace_members:
             continue
-        if "lib" not in manifest and not (member_path / "src" / "lib.rs").exists():
+        if not any("lib" in target["kind"] for target in package["targets"]):
             continue
-        package_name = manifest["package"]["name"]
+        manifest_dir = pathlib.Path(package["manifest_path"]).parent.resolve()
+        member = manifest_dir.relative_to(root).as_posix()
+        package_name = package["name"]
         crates.append((member, package_name, package_name.replace("-", "_")))
     return crates
 
@@ -82,8 +93,8 @@ def main() -> int:
             print(f"- {pkg}", file=sys.stderr)
         return 1
 
-    linked_dirs: set[str] | None = None
-    link_source: pathlib.Path | None = None
+    linked_dirs: Optional[set[str]] = None
+    link_source: Optional[pathlib.Path] = None
     if site_index.exists():
         linked_dirs = html_links(site_index)
         link_source = site_index

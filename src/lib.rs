@@ -1,36 +1,57 @@
-//! AD graph transforms for the tensor4all v2 stack.
+//! Automatic-differentiation transforms for primitive computation graphs.
 //!
-//! This crate provides two graph-to-graph transforms:
-//! [`differentiate`] for forward linearization (JVP) and [`transpose`] for
-//! reverse linear flow over a linear fragment.
-//! Fallible variants (`try_differentiate`, `try_transpose`, and
+//! `tidu` is for downstream crates that define primitive operations, local AD
+//! rules, graph runtimes, or eager tensor frontends. It does not define tensor
+//! operations itself. Instead, downstream primitive sets implement [`Primitive`],
+//! then call the graph transforms here to build new primitive computation
+//! graphs.
+//!
+//! The main transforms are:
+//!
+//! - [`linearize`] / [`try_linearize`], which build a graph for a
+//!   Jacobian-vector product (JVP) of selected outputs with respect to selected
+//!   inputs.
+//! - [`linear_transpose`] / [`try_linear_transpose`], which transpose a
+//!   linearized graph so cotangents can flow backward through the corresponding
+//!   linear map.
+//! - [`eager::try_backward`], which supports downstream eager frontends that
+//!   record primitive executions and want a reverse-mode `backward()` workflow.
+//!
+//! Fallible variants (`try_linearize`, `try_linear_transpose`, and
 //! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or
 //! extension AD rules.
-//! It also provides a small [`eager`] module for downstream frontends that want
-//! to record PyTorch-style eager reverse-mode traces over `PrimitiveOp` values.
+//!
+//! See the repository `docs/` tree for the terminology guide, tutorials, and
+//! implementer guides.
 //!
 //! # Examples
 //!
 //! ```ignore
 //! use computegraph::resolve::resolve;
-//! use tidu::{try_differentiate, try_transpose};
+//! use tidu::{try_linear_transpose, try_linearize};
 //!
-//! let view = resolve(vec![primal_fragment]);
+//! let view = resolve(vec![source_graph]);
 //! let mut ctx = ();
 //! let aliases = std::collections::HashMap::new();
-//! let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
-//! let _transposed = try_transpose(&linear, &mut ctx)?;
+//! let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+//! let _transposed = try_linear_transpose(&linear, &mut ctx)?;
 //! # Ok::<(), tidu::ADRuleError>(())
 //! ```
 
-mod differentiate;
 pub mod eager;
-pub mod emit;
-mod linear_fragment;
+mod linear_transpose;
+mod linearize;
+mod linearized_graph;
+mod primitive_graph;
 pub mod rules;
-mod transpose;
 
-pub use differentiate::{differentiate, try_differentiate};
-pub use linear_fragment::LinearFragment;
-pub use rules::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
-pub use transpose::{transpose, try_transpose};
+pub use linear_transpose::{
+    linear_transpose, try_linear_transpose, try_linear_transpose_with_builder,
+};
+pub use linearize::{linearize, try_linearize};
+pub use linearized_graph::LinearizedGraph;
+pub use primitive_graph::PrimitiveGraph;
+pub use rules::{
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
+    PrimitiveValue,
+};

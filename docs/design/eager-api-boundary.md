@@ -3,7 +3,7 @@
 ## Summary
 
 `tidu` keeps a generic eager reverse-mode recording layer for downstream
-frontends built on `computegraph` and `PrimitiveOp`, but the public surface is
+frontends built on `computegraph` and `Primitive`, but the public surface is
 limited to frontend-facing handles and executor traits.
 
 The eager layer is not a tensor runtime. Downstream crates still own concrete
@@ -18,11 +18,11 @@ runtimes, and user-facing eager tensor types.
 - allocating stable input aliases and output keys,
 - sharing one trace node across multi-output operations,
 - sorting and walking the reverse trace during backward,
-- building one-op linear fragments during backward, and
-- calling downstream executors to replay primal and transpose work.
+- building one-op linearized graphs during backward, and
+- calling downstream executors to replay primal and `linear_transpose` work.
 
-`tidu::emit` owns small helpers that execute AD-generated linear fragments
-through a caller-provided `OpEmitter`.
+The root crate owns small helpers that execute AD-generated linearized graphs
+through a caller-provided `PrimitiveBuilder`.
 
 ## Private Responsibilities
 
@@ -32,7 +32,7 @@ The following remain implementation details:
 - saved-forward key derivation,
 - saved-forward map construction,
 - reverse trace topological sorting, and
-- single-op linear-fragment construction.
+- single-op linearized graph construction.
 
 Downstream frontends should not construct trace nodes, trace edges, or saved
 forward maps by hand. They should pass eager inputs and concrete outputs to a
@@ -60,15 +60,15 @@ items live under `tidu::eager`:
 
 ```rust
 tidu::eager::{
-    BackwardExecutor, Input, KeySource, Output, Recorder, Trace, try_backward,
+    BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder, Trace, try_backward,
 }
 ```
 
-Linear-fragment emitter helpers live under `tidu::emit`:
+Builder-backed transpose helpers live at the crate root:
 
 ```rust
-tidu::emit::try_transpose_fragment(...)
+tidu::try_linear_transpose_with_builder(...)
 ```
 
 This prevents two different "eager modes" from appearing at the root API:
-there is one eager trace runtime, and one lower-level emitter helper module.
+there is one eager trace runtime, and one lower-level builder-backed helper.

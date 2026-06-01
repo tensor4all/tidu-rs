@@ -8,13 +8,13 @@ use std::fmt;
 /// ```
 /// use tidu::ADRuleKind;
 ///
-/// assert_eq!(ADRuleKind::Linearize.as_str(), "linearize");
+/// assert_eq!(ADRuleKind::Jvp.as_str(), "jvp");
 /// assert_eq!(ADRuleKind::Transpose.as_str(), "transpose");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ADRuleKind {
-    /// Forward linearization / JVP rule.
-    Linearize,
+    /// JVP rule for forward linearization.
+    Jvp,
     /// Transpose / VJP rule for a linear primitive.
     Transpose,
 }
@@ -27,11 +27,11 @@ impl ADRuleKind {
     /// ```
     /// use tidu::ADRuleKind;
     ///
-    /// assert_eq!(ADRuleKind::Linearize.as_str(), "linearize");
+    /// assert_eq!(ADRuleKind::Jvp.as_str(), "jvp");
     /// ```
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Linearize => "linearize",
+            Self::Jvp => "jvp",
             Self::Transpose => "transpose",
         }
     }
@@ -44,8 +44,8 @@ impl ADRuleKind {
 /// ```
 /// use tidu::{ADRuleError, ADRuleKind};
 ///
-/// let err = ADRuleError::unsupported("my_crate::fft", ADRuleKind::Linearize);
-/// assert_eq!(err.rule(), ADRuleKind::Linearize);
+/// let err = ADRuleError::unsupported("my_crate::fft", ADRuleKind::Jvp);
+/// assert_eq!(err.rule(), ADRuleKind::Jvp);
 /// assert!(err.to_string().contains("my_crate::fft"));
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,8 +84,8 @@ impl ADRuleError {
     /// ```
     /// use tidu::{ADRuleError, ADRuleKind};
     ///
-    /// let err = ADRuleError::unsupported("custom::op", ADRuleKind::Linearize);
-    /// assert_eq!(err.rule(), ADRuleKind::Linearize);
+    /// let err = ADRuleError::unsupported("custom::op", ADRuleKind::Jvp);
+    /// assert_eq!(err.rule(), ADRuleKind::Jvp);
     /// ```
     #[cfg_attr(coverage, inline(never))]
     pub const fn rule(&self) -> ADRuleKind {

@@ -1,32 +1,32 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{ADKey, ADRuleResult, PrimitiveOp};
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use crate::{ADKey, ADRuleResult, Primitive};
+use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
 
-use crate::LinearFragment;
+use crate::{LinearizedGraph, PrimitiveGraph};
 
 use super::trace::{Trace, TraceNode};
 
 /// Downstream execution hooks for eager backward.
-pub trait BackwardExecutor<Op: PrimitiveOp>
+pub trait BackwardExecutor<Op: Primitive>
 where
     Op::InputKey: ADKey,
 {
-    /// Execute a linear fragment forward and return any concrete values needed
-    /// by transpose execution.
+    /// Replay a primitive graph and return any concrete values needed by
+    /// transpose execution.
     fn execute_forward(
         &mut self,
-        fragment: &Fragment<Op>,
+        graph: PrimitiveGraph<'_, Op>,
         initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
     ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
 
-    /// Execute transpose for a linear fragment with concrete cotangent seeds.
-    fn execute_transpose(
+    /// Run a transposed linear graph with concrete cotangent seeds.
+    fn run_transposed_linear(
         &mut self,
-        linear: &LinearFragment<Op>,
+        linear: &LinearizedGraph<Op>,
         cotangent_out: &[Option<Arc<Op::Operand>>],
         external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
         ctx: &mut Op::ADContext,
@@ -37,7 +37,7 @@ where
 }
 
 /// Execute reverse-mode AD over an eager trace.
-pub fn try_backward<Op: PrimitiveOp>(
+pub fn try_backward<Op: Primitive>(
     output_key: &GlobalValKey<Op>,
     output_trace: Option<&Trace<Op>>,
     seed: Arc<Op::Operand>,
@@ -71,9 +71,10 @@ where
         }
 
         let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
-        let all_values = executor.execute_forward(&linear.fragment, node.saved_data());
+        let replay_graph = PrimitiveGraph::new(linear.as_graph());
+        let all_values = executor.execute_forward(replay_graph, node.saved_data());
         let cotangent_in =
-            executor.execute_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
+            executor.run_transposed_linear(&linear, &active_cotangent_out, &all_values, ctx)?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in) {
             let Some(cotangent) = maybe_cotangent else {
@@ -122,11 +123,11 @@ fn topo_sort_trace<Op: GraphOp>(output_trace: Option<&Trace<Op>>) -> Vec<Arc<Tra
     order
 }
 
-fn try_build_single_op_linear<Op: PrimitiveOp>(
+fn try_build_single_op_linear<Op: Primitive>(
     node: &TraceNode<Op>,
     output_slots: &[usize],
     ctx: &mut Op::ADContext,
-) -> ADRuleResult<LinearFragment<Op>>
+) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -188,5 +189,5 @@ where
         .collect();
     let aliases = HashMap::new();
 
-    crate::try_differentiate(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
+    crate::try_linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 }

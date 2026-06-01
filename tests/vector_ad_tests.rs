@@ -8,10 +8,10 @@ use common::{evaluate, tangent_input_key, tangent_output_key};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
+use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, Axis, IxDyn};
-use tidu::{differentiate, transpose};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use tidu::{linear_transpose, linearize};
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
@@ -125,16 +125,16 @@ impl EvalGraphOp for VectorOp {
     }
 }
 
-impl PrimitiveOp for VectorOp {
+impl Primitive for VectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         VectorOp::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -154,12 +154,12 @@ impl PrimitiveOp for VectorOp {
             VectorOp::Neg => linearize_neg!(builder, VectorOp::Neg, tangent_in[0]),
             VectorOp::ReduceSum { axes, input_shape } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         VectorOp::ReduceSum {
                             axes: axes.clone(),
                             input_shape: input_shape.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -170,12 +170,12 @@ impl PrimitiveOp for VectorOp {
             },
             VectorOp::BroadcastInDim { shape, dims } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         VectorOp::BroadcastInDim {
                             shape: shape.clone(),
                             dims: dims.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -189,9 +189,9 @@ impl PrimitiveOp for VectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -209,12 +209,12 @@ impl PrimitiveOp for VectorOp {
                 let dims = (0..input_shape.len())
                     .filter(|axis| !axes.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     VectorOp::BroadcastInDim {
                         shape: input_shape.clone(),
                         dims,
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -225,12 +225,12 @@ impl PrimitiveOp for VectorOp {
                 let axes = (0..shape.len())
                     .filter(|axis| !dims.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     VectorOp::ReduceSum {
                         axes,
                         input_shape: shape.clone(),
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -333,7 +333,7 @@ fn finite_difference_sum_exp_ax(
 #[test]
 fn jvp_elementwise_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -345,7 +345,7 @@ fn jvp_elementwise_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -364,7 +364,7 @@ fn jvp_elementwise_exp_ax() {
 #[test]
 fn vjp_elementwise_exp_ax() {
     let (primal, y_key) = build_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -372,12 +372,12 @@ fn vjp_elementwise_exp_ax() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -396,7 +396,7 @@ fn vjp_elementwise_exp_ax() {
 #[test]
 fn jvp_sum_exp_ax() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -408,7 +408,7 @@ fn jvp_sum_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -427,7 +427,7 @@ fn jvp_sum_exp_ax() {
 #[test]
 fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -435,12 +435,12 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -459,7 +459,7 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
 #[test]
 fn numerical_gradient_sum_exp_ax_matches_vjp() {
     let (primal, y_key) = build_sum_exp_ax();
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![primal.clone()]),
         std::slice::from_ref(&y_key),
         &[vk("x")],
@@ -467,12 +467,12 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
         &mut (),
         &HashMap::new(),
     );
-    let transposed = transpose(&linear, &mut ());
+    let transposed = linear_transpose(&linear, &mut ());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let vjp = evaluate(
-        vec![primal.clone(), Arc::new(transposed.fragment)],
+        vec![primal.clone(), Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),

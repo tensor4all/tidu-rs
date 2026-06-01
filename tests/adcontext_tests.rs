@@ -7,8 +7,8 @@ use std::sync::Arc;
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{GraphOp, OpEmitter};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use computegraph::GraphOp;
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 define_ad_key!(CtxKey);
 
@@ -41,16 +41,16 @@ impl GraphOp for CountingOp {
     }
 }
 
-impl PrimitiveOp for CountingOp {
+impl Primitive for CountingOp {
     type ADContext = CountingContext;
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         _primal_in: &[GlobalValKey<Self>],
         _primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -62,9 +62,9 @@ impl PrimitiveOp for CountingOp {
             Self::Add => linearize_add!(builder, CountingOp::Add, tangent_in[0], tangent_in[1]),
             Self::Identity => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::Identity,
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -78,9 +78,9 @@ impl PrimitiveOp for CountingOp {
 
     fn transpose_rule(
         &self,
-        _builder: &mut impl OpEmitter<Self>,
+        _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        _inputs: &[ValRef<Self>],
+        _inputs: &[PrimitiveValue<Self>],
         _mode: &OpMode,
         ctx: &mut CountingContext,
     ) -> Vec<Option<LocalValId>> {
@@ -115,13 +115,13 @@ fn build_identity_chain() -> (Arc<Fragment<CountingOp>>, GlobalValKey<CountingOp
 }
 
 #[test]
-fn differentiate_threads_ctx_to_all_ops() {
+fn linearize_threads_ctx_to_all_ops() {
     let (primal, output_key) = build_identity_chain();
     let view = resolve(vec![primal]);
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let _linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let _linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     assert_eq!(
         ctx.linearize_count, 2,
@@ -130,17 +130,17 @@ fn differentiate_threads_ctx_to_all_ops() {
 }
 
 #[test]
-fn transpose_threads_ctx_to_all_ops() {
+fn linear_transpose_threads_ctx_to_all_ops() {
     let (primal, output_key) = build_identity_chain();
     let view = resolve(vec![primal]);
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let linear = tidu::differentiate(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
 
     ctx.linearize_count = 0;
     ctx.transpose_count = 0;
-    let _transposed = tidu::transpose(&linear, &mut ctx);
+    let _transposed = tidu::linear_transpose(&linear, &mut ctx);
 
     assert_eq!(
         ctx.transpose_count, 2,
@@ -148,6 +148,6 @@ fn transpose_threads_ctx_to_all_ops() {
     );
     assert_eq!(
         ctx.linearize_count, 0,
-        "linearize should not be called during transpose"
+        "linearize should not be called during linear_transpose"
     );
 }

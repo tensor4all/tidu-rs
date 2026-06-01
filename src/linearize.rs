@@ -1,62 +1,63 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
+use crate::rules::FragmentPrimitiveBuilder;
+use crate::{ADKey, ADRuleResult, DiffPassId, Primitive};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::{ResolvedView, ValDef};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
 
-use crate::LinearFragment;
+use crate::LinearizedGraph;
 
-/// Differentiate a resolved computation graph, producing a linear fragment.
+/// Linearize a resolved computation graph, producing a linear graph.
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
-/// [`crate::PrimitiveOp::try_linearize`].
+/// [`crate::Primitive::try_jvp_rule`].
 ///
 /// # Examples
 ///
 /// ```ignore
 /// use computegraph::resolve::resolve;
-/// use tidu::try_differentiate;
+/// use tidu::try_linearize;
 ///
 /// let view = resolve(vec![primal_fragment]);
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
-/// let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
-/// assert_eq!(linear.tangent_outputs.len(), 1);
+/// let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+/// assert_eq!(linear.tangent_outputs().len(), 1);
 /// # Ok::<(), crate::ADRuleError>(())
 /// ```
-pub fn differentiate<Op: PrimitiveOp>(
+pub fn linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
     aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-) -> LinearFragment<Op>
+) -> LinearizedGraph<Op>
 where
     Op::InputKey: ADKey,
 {
-    match try_differentiate(view, outputs, wrt, pass, ctx, aliases) {
+    match try_linearize(view, outputs, wrt, pass, ctx, aliases) {
         Ok(linear) => linear,
         Err(err) => panic!("{err}"),
     }
 }
 
-/// Fallible form of [`differentiate`].
+/// Fallible form of [`linearize`].
 ///
 /// This returns [`crate::ADRuleError`] when a primitive cannot emit a JVP
 /// rule, allowing downstream frontends to surface missing extension rules as
 /// normal errors instead of panics.
-pub fn try_differentiate<Op: PrimitiveOp>(
+pub fn try_linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
     aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-) -> ADRuleResult<LinearFragment<Op>>
+) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -115,12 +116,18 @@ where
                     continue;
                 }
 
-                let tangent_out =
-                    op.try_linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx)?;
+                let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
+                let tangent_out = op.try_jvp_rule(
+                    &mut primitive_builder,
+                    &input_keys,
+                    &output_keys,
+                    &tangent_in,
+                    ctx,
+                )?;
                 assert_eq!(
                     tangent_out.len(),
                     output_keys.len(),
-                    "linearize for {:?} returned {} tangents for {} outputs",
+                    "jvp_rule for {:?} returned {} tangents for {} outputs",
                     op,
                     tangent_out.len(),
                     output_keys.len()
@@ -142,11 +149,11 @@ where
         builder.set_outputs(active_outputs);
     }
 
-    Ok(LinearFragment {
-        fragment: builder.build(),
+    Ok(LinearizedGraph::from_parts(
+        builder.build(),
         tangent_inputs,
         tangent_outputs,
-    })
+    ))
 }
 
 fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<GlobalValKey<Op>> {

@@ -1,4 +1,4 @@
-use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
+use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode, ValRef};
 use std::hint::black_box;
 use tidu::rules::{
     ADKey as ModuleADKey, ADRuleError as ModuleADRuleError, ADRuleKind as ModuleADRuleKind,
@@ -108,4 +108,18 @@ fn root_reexports_match_rules_module_contract() {
         transpose_err.to_string(),
         "unsupported transpose AD rule for test::transpose"
     );
+}
+
+#[test]
+fn primitive_value_round_trips_computegraph_value_refs() {
+    let local = PrimitiveValue::<AddOp>::Local(3);
+    let local_ref: ValRef<AddOp> = local.clone().into();
+    assert_eq!(local_ref, ValRef::Local(3));
+    assert_eq!(PrimitiveValue::from(local_ref), local);
+
+    let key = GlobalValKey::Input(Key::Base("x"));
+    let external = PrimitiveValue::<AddOp>::External(key.clone());
+    let external_ref: ValRef<AddOp> = external.clone().into();
+    assert_eq!(external_ref, ValRef::External(key));
+    assert_eq!(PrimitiveValue::from(external_ref), external);
 }

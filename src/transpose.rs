@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::{ADKey, ADRuleResult, PrimitiveOp};
+use crate::rules::FragmentPrimitiveBuilder;
+use crate::{ADKey, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
@@ -8,7 +9,7 @@ use crate::LinearFragment;
 
 /// Transpose a linear fragment, reversing linear flow.
 ///
-/// Fan-out accumulation is emitted explicitly with [`crate::PrimitiveOp::add`];
+/// Fan-out accumulation is emitted explicitly with [`crate::Primitive::add`];
 /// no duplication primitive is assumed by the graph transform.
 ///
 /// # Examples
@@ -18,7 +19,7 @@ use crate::LinearFragment;
 /// let transposed = tidu::transpose(&linear_fragment, &mut ctx);
 /// assert_eq!(transposed.tangent_outputs.len(), linear_fragment.tangent_inputs.len());
 /// ```
-pub fn transpose<Op: PrimitiveOp>(
+pub fn transpose<Op: Primitive>(
     linear: &LinearFragment<Op>,
     ctx: &mut Op::ADContext,
 ) -> LinearFragment<Op>
@@ -35,7 +36,7 @@ where
 ///
 /// This returns [`crate::ADRuleError`] when a primitive cannot emit a
 /// transpose rule.
-pub fn try_transpose<Op: PrimitiveOp>(
+pub fn try_transpose<Op: Primitive>(
     linear: &LinearFragment<Op>,
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<LinearFragment<Op>>
@@ -72,19 +73,20 @@ where
             continue;
         }
 
-        let rule_inputs: Vec<ValRef<Op>> = op_node
+        let rule_inputs: Vec<PrimitiveValue<Op>> = op_node
             .inputs
             .iter()
             .map(|input| match input {
                 ValRef::Local(local_id) => {
-                    ValRef::External(linear.fragment.vals()[*local_id].key.clone())
+                    PrimitiveValue::External(linear.fragment.vals()[*local_id].key.clone())
                 }
-                ValRef::External(key) => ValRef::External(key.clone()),
+                ValRef::External(key) => PrimitiveValue::External(key.clone()),
             })
             .collect();
 
+        let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
         let cotangent_in = op_node.op.try_transpose_rule(
-            &mut builder,
+            &mut primitive_builder,
             &cotangent_out,
             &rule_inputs,
             &op_node.mode,
@@ -104,15 +106,21 @@ where
                 continue;
             };
             let input_key = match input {
-                ValRef::Local(_) => unreachable!("rule inputs are normalized to external refs"),
-                ValRef::External(key) => key.clone(),
+                PrimitiveValue::Local(_) => {
+                    unreachable!("rule inputs are normalized to external refs")
+                }
+                PrimitiveValue::External(key) => key.clone(),
             };
 
             match cotangent_env.get(&input_key).copied() {
                 Some(existing_id) => {
-                    let sum = builder.add_op(
+                    let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
+                    let sum = primitive_builder.add_primitive(
                         Op::add(),
-                        vec![ValRef::Local(existing_id), ValRef::Local(cotangent_id)],
+                        vec![
+                            PrimitiveValue::Local(existing_id),
+                            PrimitiveValue::Local(cotangent_id),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![true, true],
                         },
@@ -146,7 +154,7 @@ where
     })
 }
 
-fn cotangent_seed_key<Op: PrimitiveOp>(linear: &LinearFragment<Op>, index: usize) -> Op::InputKey
+fn cotangent_seed_key<Op: Primitive>(linear: &LinearFragment<Op>, index: usize) -> Op::InputKey
 where
     Op::InputKey: ADKey,
 {

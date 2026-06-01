@@ -10,11 +10,11 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
+use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
 
@@ -153,16 +153,16 @@ impl EvalGraphOp for ComplexScalarOp {
     }
 }
 
-impl PrimitiveOp for ComplexScalarOp {
+impl Primitive for ComplexScalarOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         _primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -186,9 +186,9 @@ impl PrimitiveOp for ComplexScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -299,16 +299,16 @@ impl EvalGraphOp for VectorOp {
     }
 }
 
-impl PrimitiveOp for VectorOp {
+impl Primitive for VectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         _primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -329,9 +329,9 @@ impl PrimitiveOp for VectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {

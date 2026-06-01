@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
-use crate::{ADRuleResult, PrimitiveOp};
-use computegraph::{GlobalValKey, LocalValId, OpEmitter, OpMode, ValRef};
+use crate::{ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
+use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
 use crate::LinearFragment;
 
 /// Execute the transpose of a linear fragment using a caller-provided emitter.
 ///
 /// This mirrors [`crate::try_transpose`] but leaves concrete execution and
-/// value storage to the downstream [`computegraph::OpEmitter`].
-pub fn try_transpose_fragment<Op: PrimitiveOp>(
+/// value storage to the downstream [`PrimitiveBuilder`].
+pub fn try_transpose_fragment<Op: Primitive>(
     linear: &LinearFragment<Op>,
-    emitter: &mut impl OpEmitter<Op>,
+    builder: &mut impl PrimitiveBuilder<Op>,
     cotangent_seeds: &[Option<LocalValId>],
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<Vec<Option<LocalValId>>>
@@ -43,19 +43,19 @@ where
             continue;
         }
 
-        let rule_inputs: Vec<ValRef<Op>> = op_node
+        let rule_inputs: Vec<PrimitiveValue<Op>> = op_node
             .inputs
             .iter()
             .map(|input| match input {
                 ValRef::Local(local_id) => {
-                    ValRef::External(linear.fragment.vals()[*local_id].key.clone())
+                    PrimitiveValue::External(linear.fragment.vals()[*local_id].key.clone())
                 }
-                ValRef::External(key) => ValRef::External(key.clone()),
+                ValRef::External(key) => PrimitiveValue::External(key.clone()),
             })
             .collect();
 
         let cotangent_in = op_node.op.try_transpose_rule(
-            emitter,
+            builder,
             &cotangent_out,
             &rule_inputs,
             &op_node.mode,
@@ -75,15 +75,20 @@ where
                 continue;
             };
             let input_key = match input {
-                ValRef::Local(_) => unreachable!("rule inputs are normalized to external refs"),
-                ValRef::External(key) => key.clone(),
+                PrimitiveValue::Local(_) => {
+                    unreachable!("rule inputs are normalized to external refs")
+                }
+                PrimitiveValue::External(key) => key.clone(),
             };
 
             match cotangent_env.get(&input_key).copied() {
                 Some(existing_id) => {
-                    let sum = emitter.add_op(
+                    let sum = builder.add_primitive(
                         Op::add(),
-                        vec![ValRef::Local(existing_id), ValRef::Local(cotangent_id)],
+                        vec![
+                            PrimitiveValue::Local(existing_id),
+                            PrimitiveValue::Local(cotangent_id),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![true, true],
                         },

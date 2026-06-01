@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{ADKey, ADRuleResult, PrimitiveOp};
+use crate::{ADKey, ADRuleResult, Primitive};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
@@ -11,7 +11,7 @@ use crate::LinearFragment;
 use super::trace::{Trace, TraceNode};
 
 /// Downstream execution hooks for eager backward.
-pub trait BackwardExecutor<Op: PrimitiveOp>
+pub trait BackwardExecutor<Op: Primitive>
 where
     Op::InputKey: ADKey,
 {
@@ -37,7 +37,7 @@ where
 }
 
 /// Execute reverse-mode AD over an eager trace.
-pub fn try_backward<Op: PrimitiveOp>(
+pub fn try_backward<Op: Primitive>(
     output_key: &GlobalValKey<Op>,
     output_trace: Option<&Trace<Op>>,
     seed: Arc<Op::Operand>,
@@ -122,7 +122,7 @@ fn topo_sort_trace<Op: GraphOp>(output_trace: Option<&Trace<Op>>) -> Vec<Arc<Tra
     order
 }
 
-fn try_build_single_op_linear<Op: PrimitiveOp>(
+fn try_build_single_op_linear<Op: Primitive>(
     node: &TraceNode<Op>,
     output_slots: &[usize],
     ctx: &mut Op::ADContext,

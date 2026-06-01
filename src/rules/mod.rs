@@ -3,7 +3,7 @@
 //! This module defines the graph-level rule surface used by
 //! [`crate::try_differentiate`], [`crate::try_transpose`], and eager transpose
 //! helpers. It is intentionally narrower than Julia ChainRules: downstream
-//! primitive sets implement linearization and transpose emission for
+//! primitive sets implement JVP and transpose emission for
 //! `computegraph` graph primitives.
 
 mod ad_key;
@@ -15,4 +15,4 @@ pub use ad_key::{ADKey, DiffPassId};
 pub use ad_rule_error::{ADRuleError, ADRuleKind, ADRuleResult};
 pub(crate) use primitive_builder::FragmentPrimitiveBuilder;
 pub use primitive_builder::{PrimitiveBuilder, PrimitiveValue};
-pub use primitive_op::PrimitiveOp;
+pub use primitive_op::Primitive;

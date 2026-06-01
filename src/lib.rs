@@ -7,7 +7,7 @@
 //! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or
 //! extension AD rules.
 //! It also provides a small [`eager`] module for downstream frontends that want
-//! to record PyTorch-style eager reverse-mode traces over `PrimitiveOp` values.
+//! to record PyTorch-style eager reverse-mode traces over `Primitive` values.
 //!
 //! # Examples
 //!
@@ -33,7 +33,7 @@ mod transpose;
 pub use differentiate::{differentiate, try_differentiate};
 pub use linear_fragment::LinearFragment;
 pub use rules::{
-    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveBuilder, PrimitiveOp,
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
     PrimitiveValue,
 };
 pub use transpose::{transpose, try_transpose};

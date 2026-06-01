@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ADKey, PrimitiveOp};
+use crate::{ADKey, Primitive};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, OpMode};
 
 use super::trace::{Trace, TraceEdge, TraceNode};
@@ -65,7 +65,7 @@ impl<K> Recorder<K> {
         outputs: &[Arc<Op::Operand>],
     ) -> Vec<Output<Op>>
     where
-        Op: PrimitiveOp,
+        Op: Primitive,
         Op::InputKey: ADKey,
         K: KeySource<Op>,
     {

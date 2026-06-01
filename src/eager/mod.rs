@@ -1,4 +1,4 @@
-//! Generic eager reverse-mode recording for `PrimitiveOp` frontends.
+//! Generic eager reverse-mode recording for `Primitive` frontends.
 
 mod backward;
 mod record;

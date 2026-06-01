@@ -10,11 +10,11 @@ use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarO
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
+use computegraph::{EvalGraphOp, GraphOp};
 use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
 use tidu::{differentiate, transpose};
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
@@ -75,16 +75,16 @@ impl EvalGraphOp for ExtScalarOp {
     }
 }
 
-impl PrimitiveOp for ExtScalarOp {
+impl Primitive for ExtScalarOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -105,23 +105,29 @@ impl PrimitiveOp for ExtScalarOp {
             Self::Neg => linearize_neg!(builder, ExtScalarOp::Neg, tangent_in[0]),
             Self::SinCos => match tangent_in[0] {
                 Some(dx) => {
-                    let d_sin = builder.add_op(
+                    let d_sin = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::External(primal_out[1].clone()), ValRef::Local(dx)],
+                        vec![
+                            PrimitiveValue::External(primal_out[1].clone()),
+                            PrimitiveValue::Local(dx),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![false, true],
                         },
                     );
-                    let sin_times_dx = builder.add_op(
+                    let sin_times_dx = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::External(primal_out[0].clone()), ValRef::Local(dx)],
+                        vec![
+                            PrimitiveValue::External(primal_out[0].clone()),
+                            PrimitiveValue::Local(dx),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![false, true],
                         },
                     );
-                    let d_cos = builder.add_op(
+                    let d_cos = builder.add_primitive(
                         Self::Neg,
-                        vec![ValRef::Local(sin_times_dx[0])],
+                        vec![PrimitiveValue::Local(sin_times_dx[0])],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -135,9 +141,9 @@ impl PrimitiveOp for ExtScalarOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -306,16 +312,16 @@ impl EvalGraphOp for VectorOp {
     }
 }
 
-impl PrimitiveOp for VectorOp {
+impl Primitive for VectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -339,9 +345,9 @@ impl PrimitiveOp for VectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -512,16 +518,16 @@ impl EvalGraphOp for ComplexVectorOp {
     }
 }
 
-impl PrimitiveOp for ComplexVectorOp {
+impl Primitive for ComplexVectorOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -546,12 +552,12 @@ impl PrimitiveOp for ComplexVectorOp {
             Self::Conj => linearize_conj!(builder, ComplexVectorOp::Conj, tangent_in[0]),
             Self::ReduceSum { axes, input_shape } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::ReduceSum {
                             axes: axes.clone(),
                             input_shape: input_shape.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -562,12 +568,12 @@ impl PrimitiveOp for ComplexVectorOp {
             },
             Self::BroadcastInDim { shape, dims } => match tangent_in[0] {
                 Some(dx) => {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::BroadcastInDim {
                             shape: shape.clone(),
                             dims: dims.clone(),
                         },
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -581,9 +587,9 @@ impl PrimitiveOp for ComplexVectorOp {
 
     fn transpose_rule(
         &self,
-        builder: &mut impl OpEmitter<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -611,12 +617,12 @@ impl PrimitiveOp for ComplexVectorOp {
                 let dims = (0..input_shape.len())
                     .filter(|axis| !axes.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     Self::BroadcastInDim {
                         shape: input_shape.clone(),
                         dims,
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -627,12 +633,12 @@ impl PrimitiveOp for ComplexVectorOp {
                 let axes = (0..shape.len())
                     .filter(|axis| !dims.contains(axis))
                     .collect();
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     Self::ReduceSum {
                         axes,
                         input_shape: shape.clone(),
                     },
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },

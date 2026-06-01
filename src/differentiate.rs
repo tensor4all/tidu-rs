@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{ADKey, ADRuleResult, DiffPassId, PrimitiveOp};
+use crate::rules::FragmentPrimitiveBuilder;
+use crate::{ADKey, ADRuleResult, DiffPassId, Primitive};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::{ResolvedView, ValDef};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
@@ -12,7 +13,7 @@ use crate::LinearFragment;
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
-/// [`crate::PrimitiveOp::try_linearize`].
+/// [`crate::Primitive::try_jvp_rule`].
 ///
 /// # Examples
 ///
@@ -27,7 +28,7 @@ use crate::LinearFragment;
 /// assert_eq!(linear.tangent_outputs.len(), 1);
 /// # Ok::<(), crate::ADRuleError>(())
 /// ```
-pub fn differentiate<Op: PrimitiveOp>(
+pub fn differentiate<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
@@ -49,7 +50,7 @@ where
 /// This returns [`crate::ADRuleError`] when a primitive cannot emit a JVP
 /// rule, allowing downstream frontends to surface missing extension rules as
 /// normal errors instead of panics.
-pub fn try_differentiate<Op: PrimitiveOp>(
+pub fn try_differentiate<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
@@ -115,12 +116,18 @@ where
                     continue;
                 }
 
-                let tangent_out =
-                    op.try_linearize(&mut builder, &input_keys, &output_keys, &tangent_in, ctx)?;
+                let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
+                let tangent_out = op.try_jvp_rule(
+                    &mut primitive_builder,
+                    &input_keys,
+                    &output_keys,
+                    &tangent_in,
+                    ctx,
+                )?;
                 assert_eq!(
                     tangent_out.len(),
                     output_keys.len(),
-                    "linearize for {:?} returned {} tangents for {} outputs",
+                    "jvp_rule for {:?} returned {} tangents for {} outputs",
                     op,
                     tangent_out.len(),
                     output_keys.len()

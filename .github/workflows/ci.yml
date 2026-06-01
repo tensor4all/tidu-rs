@@ -81,10 +81,10 @@ jobs:
       - name: Check custom docs-site output is clean
         run: |
           bash scripts/build_docs_site.sh target/docs-site
-          test -f target/docs-site/design/index.html
-          mkdir -p target/docs-site/design
-          printf 'stale\n' > target/docs-site/design/stale.html
+          test -f target/docs-site/docs/index.html
+          mkdir -p target/docs-site/docs
+          printf 'stale\n' > target/docs-site/docs/stale.html
           rm -rf /tmp/tidu-docs-site-stale
           bash scripts/build_docs_site.sh /tmp/tidu-docs-site-stale
-          test -f /tmp/tidu-docs-site-stale/design/index.html
-          test ! -e /tmp/tidu-docs-site-stale/design/stale.html
+          test -f /tmp/tidu-docs-site-stale/docs/index.html
+          test ! -e /tmp/tidu-docs-site-stale/docs/stale.html

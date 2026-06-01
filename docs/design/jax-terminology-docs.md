@@ -106,10 +106,9 @@ tidu::eager::{
 }
 ```
 
-`Recorder` and `Trace` remain appropriate public terms. `Input` and `Output`
-should be renamed to `EagerInput` and `EagerOutput` to avoid generic rustdoc
-names. `BackwardExecutor` remains acceptable because it describes the
-downstream hook that performs concrete replay, transpose execution, and
+`Recorder`, `Trace`, `EagerInput`, and `EagerOutput` are the public eager
+recording terms. `BackwardExecutor` remains acceptable because it describes
+the downstream hook that performs concrete replay, transpose execution, and
 cotangent addition.
 
 The eager executor boundary should also stop exposing raw graph storage values.
@@ -225,8 +224,8 @@ The implementation should be staged:
    signatures.
 4. Wrap or hide computegraph fragments behind `LinearizedGraph` and any
    required primitive graph wrapper.
-5. Rename eager `Input`/`Output` to `EagerInput`/`EagerOutput` and adjust
-   executor signatures to avoid raw fragment exposure.
+5. Align eager recording around `EagerInput`/`EagerOutput` and adjust executor
+   signatures to avoid raw graph-storage exposure.
 6. Rebuild README, rustdoc, and the Quarto docs site around the new vocabulary.
 7. Migrate downstream crates such as tenferro after the `tidu` changes merge.
 

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use computegraph::fragment::Fragment;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp};
 use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, Recorder};
 use tidu::{
     try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
-    PrimitiveBuilder, PrimitiveValue,
+    PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -330,11 +329,12 @@ struct Callbacks {
 impl BackwardExecutor<RecorderOp> for Callbacks {
     fn execute_forward(
         &mut self,
-        fragment: &Fragment<RecorderOp>,
+        graph: PrimitiveGraph<'_, RecorderOp>,
         initial_data: &HashMap<GlobalValKey<RecorderOp>, Arc<f64>>,
     ) -> HashMap<GlobalValKey<RecorderOp>, Arc<f64>> {
         self.last_initial_data = initial_data.clone();
         let mut all_values = initial_data.clone();
+        let fragment = graph.as_graph();
 
         for &input_id in fragment.inputs() {
             let key = fragment.vals()[input_id].key.clone();

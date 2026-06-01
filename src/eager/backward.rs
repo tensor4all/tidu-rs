@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::{ADKey, ADRuleResult, Primitive};
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
 
-use crate::LinearizedGraph;
+use crate::{LinearizedGraph, PrimitiveGraph};
 
 use super::trace::{Trace, TraceNode};
 
@@ -15,15 +15,15 @@ pub trait BackwardExecutor<Op: Primitive>
 where
     Op::InputKey: ADKey,
 {
-    /// Execute a linear fragment forward and return any concrete values needed
-    /// by `linear_transpose` execution.
+    /// Replay a primitive graph and return any concrete values needed by
+    /// transpose execution.
     fn execute_forward(
         &mut self,
-        fragment: &Fragment<Op>,
+        graph: PrimitiveGraph<'_, Op>,
         initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
     ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
 
-    /// Execute `linear_transpose` for a linear fragment with concrete cotangent seeds.
+    /// Execute transpose for a linearized graph with concrete cotangent seeds.
     fn execute_transpose(
         &mut self,
         linear: &LinearizedGraph<Op>,
@@ -71,7 +71,8 @@ where
         }
 
         let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
-        let all_values = executor.execute_forward(linear.as_graph(), node.saved_data());
+        let replay_graph = PrimitiveGraph::new(linear.as_graph());
+        let all_values = executor.execute_forward(replay_graph, node.saved_data());
         let cotangent_in =
             executor.execute_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
 

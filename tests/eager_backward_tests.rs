@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
 use computegraph::{EvalGraphOp, GraphOp};
 use tidu::eager::{self, BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder};
 use tidu::{
     linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
-    PrimitiveBuilder, PrimitiveValue,
+    PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -422,9 +422,10 @@ struct PartialOutputCallbacks {
 impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
     fn execute_forward(
         &mut self,
-        fragment: &Fragment<TwoOutputOp>,
+        graph: PrimitiveGraph<'_, TwoOutputOp>,
         initial_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
     ) -> HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>> {
+        let fragment = graph.as_graph();
         self.observed_fragment_outputs = fragment.outputs().len();
         initial_data.clone()
     }
@@ -523,10 +524,11 @@ struct ScalarBackwardCallbacks;
 impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
     fn execute_forward(
         &mut self,
-        fragment: &Fragment<ScalarOp>,
+        graph: PrimitiveGraph<'_, ScalarOp>,
         initial_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
     ) -> HashMap<GlobalValKey<ScalarOp>, Arc<f64>> {
         let mut all_values = initial_data.clone();
+        let fragment = graph.as_graph();
 
         for &input_id in fragment.inputs() {
             let key = fragment.vals()[input_id].key.clone();

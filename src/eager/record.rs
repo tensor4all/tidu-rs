@@ -7,7 +7,7 @@ use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, OpMode};
 use super::trace::{Trace, TraceEdge, TraceNode};
 
 /// Input descriptor for recording one eager primitive execution.
-pub struct Input<Op: GraphOp> {
+pub struct EagerInput<Op: GraphOp> {
     /// User-visible eager value key used for cotangent accumulation.
     pub key: GlobalValKey<Op>,
     /// Trace node that produced this value, or `None` for leaves.
@@ -19,7 +19,7 @@ pub struct Input<Op: GraphOp> {
 }
 
 /// Per-output trace metadata returned by [`Recorder::record`].
-pub struct Output<Op: GraphOp> {
+pub struct EagerOutput<Op: GraphOp> {
     /// User-visible eager output key.
     pub key: GlobalValKey<Op>,
     /// Shared trace node for all outputs when any input requires gradients.
@@ -61,9 +61,9 @@ impl<K> Recorder<K> {
     pub fn record<Op>(
         &mut self,
         op: Op,
-        inputs: &[Input<Op>],
+        inputs: &[EagerInput<Op>],
         outputs: &[Arc<Op::Operand>],
-    ) -> Vec<Output<Op>>
+    ) -> Vec<EagerOutput<Op>>
     where
         Op: Primitive,
         Op::InputKey: ADKey,
@@ -118,7 +118,7 @@ impl<K> Recorder<K> {
         output_keys
             .into_iter()
             .enumerate()
-            .map(|(output_slot, key)| Output {
+            .map(|(output_slot, key)| EagerOutput {
                 key,
                 trace: trace.clone(),
                 requires_grad,
@@ -152,7 +152,7 @@ fn derived_output_key<Op: GraphOp>(
 fn saved_forward_values<Op: GraphOp>(
     op: &Op,
     input_aliases: &[GlobalValKey<Op>],
-    inputs: &[Input<Op>],
+    inputs: &[EagerInput<Op>],
     outputs: &[Arc<Op::Operand>],
 ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>> {
     assert_eq!(

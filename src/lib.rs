@@ -27,6 +27,7 @@ pub mod eager;
 mod linear_transpose;
 mod linearize;
 mod linearized_graph;
+mod primitive_graph;
 pub mod rules;
 
 pub use linear_transpose::{
@@ -34,6 +35,7 @@ pub use linear_transpose::{
 };
 pub use linearize::{linearize, try_linearize};
 pub use linearized_graph::LinearizedGraph;
+pub use primitive_graph::PrimitiveGraph;
 pub use rules::{
     ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
     PrimitiveValue,

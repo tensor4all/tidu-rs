@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use computegraph::{GlobalValKey, GraphOp};
+use computegraph::{GraphOperation, ValueKey};
 
 /// Opaque handle to an eager reverse-mode trace node.
 ///
 /// Downstream eager values store this handle next to their concrete data and
 /// pass it back to [`crate::eager::try_backward`]. The node and edge layout is
 /// intentionally private.
-pub struct Trace<Op: GraphOp> {
+pub struct Trace<Op: GraphOperation> {
     node: Arc<TraceNode<Op>>,
 }
 
-impl<Op: GraphOp> Clone for Trace<Op> {
+impl<Op: GraphOperation> Clone for Trace<Op> {
     fn clone(&self) -> Self {
         Self {
             node: self.node.clone(),
@@ -20,7 +20,7 @@ impl<Op: GraphOp> Clone for Trace<Op> {
     }
 }
 
-impl<Op: GraphOp> Trace<Op> {
+impl<Op: GraphOperation> Trace<Op> {
     pub(crate) fn new(node: Arc<TraceNode<Op>>) -> Self {
         Self { node }
     }
@@ -30,61 +30,61 @@ impl<Op: GraphOp> Trace<Op> {
     }
 
     /// Saved concrete primal values used as initial data during backward replay.
-    pub fn saved_values(&self) -> &HashMap<GlobalValKey<Op>, Arc<Op::Operand>> {
+    pub fn saved_values(&self) -> &HashMap<ValueKey<Op>, Arc<Op::Operand>> {
         self.node.saved_data()
     }
 }
 
-pub(crate) struct TraceNode<Op: GraphOp> {
-    op: Op,
-    primal_in_keys: Vec<GlobalValKey<Op>>,
-    primal_out_keys: Vec<GlobalValKey<Op>>,
-    saved_data: HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
+pub(crate) struct TraceNode<Op: GraphOperation> {
+    operation: Op,
+    primal_in_keys: Vec<ValueKey<Op>>,
+    primal_out_keys: Vec<ValueKey<Op>>,
+    saved_data: HashMap<ValueKey<Op>, Arc<Op::Operand>>,
     input_edges: Vec<TraceEdge<Op>>,
 }
 
-impl<Op: GraphOp> TraceNode<Op> {
+impl<Op: GraphOperation> TraceNode<Op> {
     pub(crate) fn new(
-        op: Op,
-        primal_in_keys: Vec<GlobalValKey<Op>>,
-        primal_out_keys: Vec<GlobalValKey<Op>>,
-        saved_data: HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
+        operation: Op,
+        primal_in_keys: Vec<ValueKey<Op>>,
+        primal_out_keys: Vec<ValueKey<Op>>,
+        saved_data: HashMap<ValueKey<Op>, Arc<Op::Operand>>,
         input_edges: Vec<TraceEdge<Op>>,
     ) -> Self {
         assert_eq!(
             primal_in_keys.len(),
-            op.n_inputs(),
+            operation.input_count(),
             "trace node for {:?} expected {} primal input keys, got {}",
-            op,
-            op.n_inputs(),
+            operation,
+            operation.input_count(),
             primal_in_keys.len()
         );
         assert_eq!(
             primal_out_keys.len(),
-            op.n_outputs(),
+            operation.output_count(),
             "trace node for {:?} expected {} primal output keys, got {}",
-            op,
-            op.n_outputs(),
+            operation,
+            operation.output_count(),
             primal_out_keys.len()
         );
         assert_eq!(
             input_edges.len(),
-            op.n_inputs(),
+            operation.input_count(),
             "trace node for {:?} expected {} input edges, got {}",
-            op,
-            op.n_inputs(),
+            operation,
+            operation.input_count(),
             input_edges.len()
         );
         assert!(
             primal_in_keys
                 .iter()
-                .all(|key| matches!(key, GlobalValKey::Input(_))),
-            "trace node for {:?} requires GlobalValKey::Input aliases in primal_in_keys",
-            op
+                .all(|key| matches!(key, ValueKey::Input(_))),
+            "trace node for {:?} requires ValueKey::Input aliases in primal_in_keys",
+            operation
         );
 
         Self {
-            op,
+            operation,
             primal_in_keys,
             primal_out_keys,
             saved_data,
@@ -92,19 +92,19 @@ impl<Op: GraphOp> TraceNode<Op> {
         }
     }
 
-    pub(crate) fn op(&self) -> &Op {
-        &self.op
+    pub(crate) fn operation(&self) -> &Op {
+        &self.operation
     }
 
-    pub(crate) fn primal_in_keys(&self) -> &[GlobalValKey<Op>] {
+    pub(crate) fn primal_in_keys(&self) -> &[ValueKey<Op>] {
         &self.primal_in_keys
     }
 
-    pub(crate) fn primal_out_keys(&self) -> &[GlobalValKey<Op>] {
+    pub(crate) fn primal_out_keys(&self) -> &[ValueKey<Op>] {
         &self.primal_out_keys
     }
 
-    pub(crate) fn saved_data(&self) -> &HashMap<GlobalValKey<Op>, Arc<Op::Operand>> {
+    pub(crate) fn saved_data(&self) -> &HashMap<ValueKey<Op>, Arc<Op::Operand>> {
         &self.saved_data
     }
 
@@ -113,16 +113,16 @@ impl<Op: GraphOp> TraceNode<Op> {
     }
 }
 
-pub(crate) struct TraceEdge<Op: GraphOp> {
+pub(crate) struct TraceEdge<Op: GraphOperation> {
     pub(crate) node: Option<Arc<TraceNode<Op>>>,
-    pub(crate) key: GlobalValKey<Op>,
+    pub(crate) key: ValueKey<Op>,
     pub(crate) requires_grad: bool,
 }
 
-impl<Op: GraphOp> TraceEdge<Op> {
+impl<Op: GraphOperation> TraceEdge<Op> {
     pub(crate) fn new(
         node: Option<Arc<TraceNode<Op>>>,
-        key: GlobalValKey<Op>,
+        key: ValueKey<Op>,
         requires_grad: bool,
     ) -> Self {
         Self {

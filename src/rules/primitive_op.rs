@@ -1,19 +1,19 @@
 use super::{ADKey, ADRuleResult, PrimitiveBuilder, PrimitiveValue};
-use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
+use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 
-/// Extends `GraphOp` with primitive JVP and transpose rules for AD.
+/// Extends `GraphOperation` with primitive JVP and transpose rules for AD.
 ///
 /// - `try_jvp_rule` is called by [`crate::try_linearize`]
 /// - `try_linear_transpose_rule` is called by [`crate::try_linear_transpose`]
 ///
-/// Both methods emit new primitive applications through a [`PrimitiveBuilder`]. The downstream
+/// Both methods add new primitive applications through a [`PrimitiveBuilder`]. The downstream
 /// implementor is responsible for ensuring closure: every op emitted must also
 /// implement `Primitive`.
 ///
 /// # Examples
 ///
 /// ```
-/// use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
+/// use computegraph::{ValueKey, GraphOperation, LocalValueId, OperationRole};
 /// use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 ///
 /// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -26,12 +26,12 @@ use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 /// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// struct AddOp;
 ///
-/// impl GraphOp for AddOp {
+/// impl GraphOperation for AddOp {
 ///     type Operand = f64;
 ///     type Context = ();
 ///     type InputKey = Key;
-///     fn n_inputs(&self) -> usize { 2 }
-///     fn n_outputs(&self) -> usize { 1 }
+///     fn input_count(&self) -> usize { 2 }
+///     fn output_count(&self) -> usize { 1 }
 /// }
 ///
 /// impl Primitive for AddOp {
@@ -40,22 +40,22 @@ use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 ///     fn add() -> Self { AddOp }
 ///     fn jvp_rule(
 ///         &self, _b: &mut impl PrimitiveBuilder<Self>,
-///         _pi: &[GlobalValKey<Self>], _po: &[GlobalValKey<Self>],
-///         t: &[Option<LocalValId>],
+///         _pi: &[ValueKey<Self>], _po: &[ValueKey<Self>],
+///         t: &[Option<LocalValueId>],
 ///         _ctx: &mut (),
-///     ) -> Vec<Option<LocalValId>> {
+///     ) -> Vec<Option<LocalValueId>> {
 ///         vec![t[0].or(t[1])]
 ///     }
 ///     fn transpose_rule(
 ///         &self, _builder: &mut impl PrimitiveBuilder<Self>,
-///         ct: &[Option<LocalValId>], _i: &[PrimitiveValue<Self>], _m: &OpMode,
+///         ct: &[Option<LocalValueId>], _i: &[PrimitiveValue<Self>], _m: &OperationRole,
 ///         _ctx: &mut (),
-///     ) -> Vec<Option<LocalValId>> {
+///     ) -> Vec<Option<LocalValueId>> {
 ///         vec![ct[0], ct[0]]
 ///     }
 /// }
 /// ```
-pub trait Primitive: GraphOp
+pub trait Primitive: GraphOperation
 where
     Self::InputKey: ADKey,
 {
@@ -67,7 +67,7 @@ where
 
     /// Returns the addition operation used for cotangent accumulation
     /// in [`crate::linear_transpose`]. When multiple cotangents flow to the same
-    /// `GlobalValKey`, `linear_transpose` emits `Op::add()` nodes to sum them.
+    /// `ValueKey`, `linear_transpose` emits `Op::add()` nodes to sum them.
     fn add() -> Self
     where
         Self: Sized;
@@ -75,15 +75,15 @@ where
     /// Emit the JVP rule for this primitive.
     ///
     /// Must be linear in tangent inputs. May reference primal inputs/outputs
-    /// through `External(GlobalValKey)`. Must emit ops in `OpMode::Linear`.
+    /// through `External(ValueKey)`. Must emit ops in `OperationRole::Linearized`.
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_inputs: &[GlobalValKey<Self>],
-        primal_outputs: &[GlobalValKey<Self>],
-        tangent_inputs: &[Option<LocalValId>],
+        primal_inputs: &[ValueKey<Self>],
+        primal_outputs: &[ValueKey<Self>],
+        tangent_inputs: &[Option<LocalValueId>],
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValId>>
+    ) -> Vec<Option<LocalValueId>>
     where
         Self: Sized;
 
@@ -96,11 +96,11 @@ where
     fn try_jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_inputs: &[GlobalValKey<Self>],
-        primal_outputs: &[GlobalValKey<Self>],
-        tangent_inputs: &[Option<LocalValId>],
+        primal_inputs: &[ValueKey<Self>],
+        primal_outputs: &[ValueKey<Self>],
+        tangent_inputs: &[Option<LocalValueId>],
         ctx: &mut Self::ADContext,
-    ) -> ADRuleResult<Vec<Option<LocalValId>>>
+    ) -> ADRuleResult<Vec<Option<LocalValueId>>>
     where
         Self: Sized,
     {
@@ -114,11 +114,11 @@ where
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_outputs: &[Option<LocalValId>],
+        cotangent_outputs: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValId>>
+    ) -> Vec<Option<LocalValueId>>
     where
         Self: Sized;
 
@@ -131,14 +131,14 @@ where
     fn try_linear_transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_outputs: &[Option<LocalValId>],
+        cotangent_outputs: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         ctx: &mut Self::ADContext,
-    ) -> ADRuleResult<Vec<Option<LocalValId>>>
+    ) -> ADRuleResult<Vec<Option<LocalValueId>>>
     where
         Self: Sized,
     {
-        Ok(self.transpose_rule(builder, cotangent_outputs, inputs, mode, ctx))
+        Ok(self.transpose_rule(builder, cotangent_outputs, inputs, role, ctx))
     }
 }

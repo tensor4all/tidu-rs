@@ -13,6 +13,6 @@ mod primitive_op;
 
 pub use ad_key::{ADKey, DiffPassId};
 pub use ad_rule_error::{ADRuleError, ADRuleKind, ADRuleResult};
-pub(crate) use primitive_builder::FragmentPrimitiveBuilder;
+pub(crate) use primitive_builder::GraphPrimitiveBuilder;
 pub use primitive_builder::{PrimitiveBuilder, PrimitiveValue};
 pub use primitive_op::Primitive;

@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use common::assertions::assert_tensor_approx_eq;
 use common::{evaluate, tangent_input_key, tangent_output_key};
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
 use ndarray::{ArrayD, Axis, IxDyn};
 use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
@@ -90,12 +90,12 @@ enum VectorOp {
     },
 }
 
-impl GraphOp for VectorOp {
+impl GraphOperation for VectorOp {
     type Operand = Tensor;
     type Context = ();
     type InputKey = VectorKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             VectorOp::Add | VectorOp::Mul => 2,
             VectorOp::Exp
@@ -105,12 +105,12 @@ impl GraphOp for VectorOp {
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for VectorOp {
+impl EvaluableGraphOperation for VectorOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&Tensor]) -> Vec<Tensor> {
         match self {
             VectorOp::Add => vec![Tensor(&inputs[0].0 + &inputs[1].0)],
@@ -135,11 +135,11 @@ impl Primitive for VectorOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        primal_in: &[ValueKey<Self>],
+        primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             VectorOp::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
             VectorOp::Mul => linearize_mul!(
@@ -160,7 +160,7 @@ impl Primitive for VectorOp {
                             input_shape: input_shape.clone(),
                         },
                         vec![PrimitiveValue::Local(dx)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true],
                         },
                     );
@@ -176,7 +176,7 @@ impl Primitive for VectorOp {
                             dims: dims.clone(),
                         },
                         vec![PrimitiveValue::Local(dx)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true],
                         },
                     );
@@ -190,19 +190,19 @@ impl Primitive for VectorOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.n_inputs()],
+            None => return vec![None; self.input_count()],
         };
 
         match self {
             VectorOp::Add => transpose_add!(ct),
-            VectorOp::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, mode),
+            VectorOp::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, role),
             VectorOp::Exp => panic!("transpose_rule called on primal-only Exp"),
             VectorOp::Neg => transpose_neg!(builder, VectorOp::Neg, ct),
             VectorOp::ReduceSum { axes, input_shape } => {
@@ -215,7 +215,7 @@ impl Primitive for VectorOp {
                         dims,
                     },
                     vec![PrimitiveValue::Local(ct)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );
@@ -231,7 +231,7 @@ impl Primitive for VectorOp {
                         input_shape: shape.clone(),
                     },
                     vec![PrimitiveValue::Local(ct)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );
@@ -245,8 +245,8 @@ fn vk(name: &str) -> VectorKey {
     VectorKey::User(name.to_string())
 }
 
-fn input_key(name: &str) -> GlobalValKey<VectorOp> {
-    GlobalValKey::Input(vk(name))
+fn input_key(name: &str) -> ValueKey<VectorOp> {
+    ValueKey::Input(vk(name))
 }
 
 fn scalar(value: f64) -> Tensor {
@@ -260,38 +260,46 @@ fn vector(values: &[f64]) -> Tensor {
     )
 }
 
-fn build_exp_ax() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
-    let mut builder = FragmentBuilder::<VectorOp>::new();
+fn build_exp_ax() -> (Arc<Graph<VectorOp>>, ValueKey<VectorOp>) {
+    let mut builder = GraphBuilder::<VectorOp>::new();
     let x = builder.add_input(vk("x"));
     let a = builder.add_input(vk("a"));
-    let ax = builder.add_op(
+    let ax = builder.add_operation(
         VectorOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(a)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(a)],
+        OperationRole::Primary,
     );
-    let y = builder.add_op(VectorOp::Exp, vec![ValRef::Local(ax[0])], OpMode::Primal);
+    let y = builder.add_operation(
+        VectorOp::Exp,
+        vec![ValueRef::Local(ax[0])],
+        OperationRole::Primary,
+    );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_sum_exp_ax() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
-    let mut builder = FragmentBuilder::<VectorOp>::new();
+fn build_sum_exp_ax() -> (Arc<Graph<VectorOp>>, ValueKey<VectorOp>) {
+    let mut builder = GraphBuilder::<VectorOp>::new();
     let x = builder.add_input(vk("x"));
     let a = builder.add_input(vk("a"));
-    let ax = builder.add_op(
+    let ax = builder.add_operation(
         VectorOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(a)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(a)],
+        OperationRole::Primary,
     );
-    let exp_ax = builder.add_op(VectorOp::Exp, vec![ValRef::Local(ax[0])], OpMode::Primal);
-    let y = builder.add_op(
+    let exp_ax = builder.add_operation(
+        VectorOp::Exp,
+        vec![ValueRef::Local(ax[0])],
+        OperationRole::Primary,
+    );
+    let y = builder.add_operation(
         VectorOp::ReduceSum {
             axes: vec![0],
             input_shape: vec![2],
         },
-        vec![ValRef::Local(exp_ax[0])],
-        OpMode::Primal,
+        vec![ValueRef::Local(exp_ax[0])],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
@@ -299,8 +307,8 @@ fn build_sum_exp_ax() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
 }
 
 fn finite_difference_sum_exp_ax(
-    primal: Arc<Fragment<VectorOp>>,
-    y_key: &GlobalValKey<VectorOp>,
+    primal: Arc<Graph<VectorOp>>,
+    y_key: &ValueKey<VectorOp>,
 ) -> Tensor {
     let base = [1.0, 2.0];
     let h = 1e-4;

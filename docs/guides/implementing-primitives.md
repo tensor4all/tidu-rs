@@ -5,12 +5,12 @@ operation descriptor type.
 
 ## Operation Contract
 
-A primitive operation must first implement `computegraph::GraphOp`:
+A primitive operation must first implement `computegraph::GraphOperation`:
 
 - `Operand` is the concrete value type used by the runtime.
 - `Context` is runtime evaluation context.
 - `InputKey` identifies graph inputs and must implement `tidu::ADKey`.
-- `n_inputs` and `n_outputs` describe operation arity.
+- `input_count` and `output_count` describe operation arity.
 
 `tidu::Primitive` adds AD-specific requirements:
 
@@ -31,10 +31,10 @@ and add must both be valid primitives in the downstream set.
 
 ## Active And Inactive Inputs
 
-In rule signatures, `LocalValId` is the graph-local identifier for a value
+In rule signatures, `LocalValueId` is the graph-local identifier for a value
 created while building the transformed primitive computation graph.
 
-JVP rules receive `Option<LocalValId>` tangent inputs. `None` means the
+JVP rules receive `Option<LocalValueId>` tangent inputs. `None` means the
 corresponding primal input is not active for the current transform. Rules should
 avoid emitting work for inactive inputs.
 

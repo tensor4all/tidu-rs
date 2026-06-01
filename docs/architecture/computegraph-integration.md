@@ -9,11 +9,11 @@ advanced runtimes may need raw access.
 
 ## Storage Terms
 
-- `Fragment` is the lower-level graph container.
-- `LocalValId` identifies a value within one graph container.
-- `GlobalValKey` identifies an input or derived value across graph boundaries.
-- `ValRef` represents an operation input, either local or external.
-- `OpMode` marks primal operations and linear operations.
+- `Graph` is the lower-level graph container.
+- `LocalValueId` identifies a value within one graph container.
+- `ValueKey` identifies an input or derived value across graph boundaries.
+- `ValueRef` represents an operation input, either local or external.
+- `OperationRole` marks primal operations and linear operations.
 
 ## Why These Appear
 

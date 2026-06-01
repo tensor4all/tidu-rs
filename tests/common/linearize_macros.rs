@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use computegraph::types::{GlobalValKey, LocalValId, OpMode};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey};
 #[allow(unused_imports)]
 use tidu::PrimitiveValue;
 
@@ -11,7 +11,7 @@ macro_rules! linearize_add {
                 let out = $builder.add_primitive(
                     $OpAdd,
                     vec![PrimitiveValue::Local(dx), PrimitiveValue::Local(dy)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true, true],
                     },
                 );
@@ -35,7 +35,7 @@ macro_rules! linearize_mul {
                     PrimitiveValue::Local(dx),
                     PrimitiveValue::External($primal_in[1].clone()),
                 ],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![true, false],
                 },
             );
@@ -48,7 +48,7 @@ macro_rules! linearize_mul {
                     PrimitiveValue::External($primal_in[0].clone()),
                     PrimitiveValue::Local(dy),
                 ],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
             );
@@ -61,7 +61,7 @@ macro_rules! linearize_mul {
                 let sum = $builder.add_primitive(
                     $OpAdd,
                     vec![PrimitiveValue::Local(*lhs), PrimitiveValue::Local(*rhs)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true, true],
                     },
                 );
@@ -83,7 +83,7 @@ macro_rules! linearize_exp {
                         PrimitiveValue::External($primal_out.clone()),
                         PrimitiveValue::Local(dx),
                     ],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![false, true],
                     },
                 );
@@ -102,7 +102,7 @@ macro_rules! linearize_neg {
                 let out = $builder.add_primitive(
                     $OpNeg,
                     vec![PrimitiveValue::Local(dx)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );
@@ -121,7 +121,7 @@ macro_rules! linearize_conj {
                 let out = $builder.add_primitive(
                     $OpConj,
                     vec![PrimitiveValue::Local(dx)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );

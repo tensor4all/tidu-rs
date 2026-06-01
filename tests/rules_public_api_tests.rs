@@ -1,4 +1,4 @@
-use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode, ValRef};
+use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey, ValueRef};
 use std::hint::black_box;
 use tidu::rules::{
     ADKey as ModuleADKey, ADRuleError as ModuleADRuleError, ADRuleKind as ModuleADRuleKind,
@@ -28,16 +28,16 @@ impl ADKey for Key {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct AddOp;
 
-impl GraphOp for AddOp {
+impl GraphOperation for AddOp {
     type Operand = f64;
     type Context = ();
     type InputKey = Key;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         2
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
@@ -52,22 +52,22 @@ impl Primitive for AddOp {
     fn jvp_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
-        _primal_inputs: &[GlobalValKey<Self>],
-        _primal_outputs: &[GlobalValKey<Self>],
-        tangent_inputs: &[Option<LocalValId>],
+        _primal_inputs: &[ValueKey<Self>],
+        _primal_outputs: &[ValueKey<Self>],
+        tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         vec![tangent_inputs[0].or(tangent_inputs[1])]
     }
 
     fn transpose_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_outputs: &[Option<LocalValId>],
+        cotangent_outputs: &[Option<LocalValueId>],
         _inputs: &[PrimitiveValue<Self>],
-        _mode: &OpMode,
+        _mode: &OperationRole,
         _ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         vec![cotangent_outputs[0], cotangent_outputs[0]]
     }
 }
@@ -113,13 +113,13 @@ fn root_reexports_match_rules_module_contract() {
 #[test]
 fn primitive_value_round_trips_computegraph_value_refs() {
     let local = PrimitiveValue::<AddOp>::Local(3);
-    let local_ref: ValRef<AddOp> = local.clone().into();
-    assert_eq!(local_ref, ValRef::Local(3));
+    let local_ref: ValueRef<AddOp> = local.clone().into();
+    assert_eq!(local_ref, ValueRef::Local(3));
     assert_eq!(PrimitiveValue::from(local_ref), local);
 
-    let key = GlobalValKey::Input(Key::Base("x"));
+    let key = ValueKey::Input(Key::Base("x"));
     let external = PrimitiveValue::<AddOp>::External(key.clone());
-    let external_ref: ValRef<AddOp> = external.clone().into();
-    assert_eq!(external_ref, ValRef::External(key));
+    let external_ref: ValueRef<AddOp> = external.clone().into();
+    assert_eq!(external_ref, ValueRef::External(key));
     assert_eq!(PrimitiveValue::from(external_ref), external);
 }

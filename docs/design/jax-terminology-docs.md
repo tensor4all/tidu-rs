@@ -13,15 +13,16 @@ the public API.
 The primary audience is downstream implementers: crates that define primitive
 operations, AD rules, graph runtimes, or eager tensor frontends.
 
-In this design note, `Fragment` means the lower-level `computegraph` graph
-container, and emitter or `OpEmitter` means a lower-level builder used to append
-operations to that container. These are implementation terms, not the public
-learning vocabulary.
+In this design note, `Graph` means the lower-level `computegraph` graph
+container. `PrimitiveBuilder` is the `tidu` rule-building trait used by JVP and
+transpose rules to append primitive applications.
 
 The public vocabulary should align with JAX where the concepts match:
 primitive, JVP rule, linearization, transpose rule, and transposed linear maps.
-Implementation words such as fragment and emitter should not appear in the
-main public API or in first-read documentation.
+Lower-level storage words should not dominate first-read documentation. Public
+wrapper names such as `LinearizedGraph`, `PrimitiveGraph`, and
+`PrimitiveBuilder` should be introduced from their AD use cases rather than as
+raw storage details.
 
 ## Audience
 
@@ -58,7 +59,7 @@ The documentation should define these terms without assuming JAX knowledge:
 
 The first-read docs should avoid lower-level representation words from
 `computegraph`. Architecture or internals pages may name lower-level
-computegraph types such as `Fragment`, `OpEmitter`, `LocalValId`, and `ValRef`
+computegraph types such as `Graph`, `PrimitiveBuilder`, `LocalValueId`, and `ValueRef`
 when documenting advanced integration points, but those terms should not be
 presented as the main `tidu` API vocabulary.
 
@@ -76,7 +77,7 @@ JAX-aligned names:
 - `LinearizedGraph` is the public wrapper for graph transform results.
 - `Primitive` is the public trait implemented by downstream operation sets.
 
-`LinearizedGraph` should not expose a public `fragment` field. It should own
+`LinearizedGraph` should not expose a public `graph` field. It should own
 the lower-level computegraph representation privately and expose use-case
 oriented methods. If downstream crates need raw access, provide explicit
 advanced methods such as `as_graph()` or `into_graph()` and keep those methods
@@ -213,7 +214,7 @@ Guides should be broader than tutorials and explain contracts:
 
 Architecture docs may explain the dependency on `computegraph` and the exact
 storage model. They may name lower-level computegraph details such as
-`Fragment`, `OpEmitter`, `LocalValId`, and `ValRef`, but should explicitly
+`Graph`, `PrimitiveBuilder`, `LocalValueId`, and `ValueRef`, but should explicitly
 label them as advanced integration material rather than first-read concepts.
 
 Internals docs should be optional. A downstream implementer should be able to
@@ -227,7 +228,7 @@ The implementation should be staged:
    names from the intended public path.
 2. Rename graph transform APIs and public types.
 3. Introduce `PrimitiveBuilder` for public rule signatures.
-4. Wrap or hide computegraph fragments behind `LinearizedGraph` and any
+4. Wrap or hide computegraph graphs behind `LinearizedGraph` and any
    required primitive graph wrapper.
 5. Align eager recording around `EagerInput`/`EagerOutput` and adjust executor
    signatures to avoid raw graph-storage exposure.
@@ -246,4 +247,4 @@ additive compatibility aliases.
   computegraph interoperability.
 - Use wrapper graph types in eager executor signatures instead of narrower
   single-operation callbacks. This keeps eager backward aligned with the graph
-  transform API and avoids leaking lower-level `Fragment` names.
+  transform API and avoids leaking lower-level `Graph` names.

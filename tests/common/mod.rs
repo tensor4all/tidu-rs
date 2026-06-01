@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use computegraph::compile::compile;
-use computegraph::fragment::Fragment;
+use computegraph::graph::Graph;
 use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::LinearizedGraph;
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
@@ -26,24 +26,24 @@ pub enum ScalarOp {
     Neg,
 }
 
-impl GraphOp for ScalarOp {
+impl GraphOperation for ScalarOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             ScalarOp::Add | ScalarOp::Mul => 2,
             ScalarOp::Exp | ScalarOp::Neg => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for ScalarOp {
+impl EvaluableGraphOperation for ScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             ScalarOp::Add => vec![inputs[0] + inputs[1]],
@@ -64,11 +64,11 @@ impl Primitive for ScalarOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        primal_in: &[ValueKey<Self>],
+        primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             ScalarOp::Add => linearize_add!(builder, ScalarOp::Add, tangent_in[0], tangent_in[1]),
             ScalarOp::Mul => {
@@ -89,19 +89,19 @@ impl Primitive for ScalarOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.n_inputs()],
+            None => return vec![None; self.input_count()],
         };
 
         match self {
             ScalarOp::Add => transpose_add!(ct),
-            ScalarOp::Mul => transpose_mul_real!(builder, ScalarOp::Mul, inputs, ct, mode),
+            ScalarOp::Mul => transpose_mul_real!(builder, ScalarOp::Mul, inputs, ct, role),
             ScalarOp::Exp => panic!("transpose_rule called on primal-only Exp"),
             ScalarOp::Neg => transpose_neg!(builder, ScalarOp::Neg, ct),
         }
@@ -109,12 +109,12 @@ impl Primitive for ScalarOp {
 }
 
 pub fn evaluate<Op>(
-    roots: Vec<Arc<Fragment<Op>>>,
-    outputs: &[GlobalValKey<Op>],
-    bindings: &[(GlobalValKey<Op>, Op::Operand)],
+    roots: Vec<Arc<Graph<Op>>>,
+    outputs: &[ValueKey<Op>],
+    bindings: &[(ValueKey<Op>, Op::Operand)],
 ) -> Vec<Op::Operand>
 where
-    Op: Primitive + EvalGraphOp,
+    Op: Primitive + EvaluableGraphOperation,
     Op::Context: Default,
     Op::InputKey: ADKey,
 {
@@ -136,24 +136,21 @@ where
     program.eval(&mut Default::default(), &ordered_refs)
 }
 
-pub fn tangent_input_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> GlobalValKey<Op>
+pub fn tangent_input_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> ValueKey<Op>
 where
     Op: Primitive,
     Op::InputKey: ADKey,
 {
     let local_id = linear.tangent_inputs()[index].1;
-    linear.as_graph().vals()[local_id].key.clone()
+    linear.as_graph().values()[local_id].key.clone()
 }
 
-pub fn tangent_output_key<Op>(
-    linear: &LinearizedGraph<Op>,
-    index: usize,
-) -> Option<GlobalValKey<Op>>
+pub fn tangent_output_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> Option<ValueKey<Op>>
 where
     Op: Primitive,
     Op::InputKey: ADKey,
 {
-    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().vals()[local_id].key.clone())
+    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().values()[local_id].key.clone())
 }
 
 pub mod assertions;

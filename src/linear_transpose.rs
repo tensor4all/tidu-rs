@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::rules::FragmentPrimitiveBuilder;
+use crate::rules::GraphPrimitiveBuilder;
 use crate::{ADKey, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
-use computegraph::fragment::FragmentBuilder;
-use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
+use computegraph::graph::GraphBuilder;
+use computegraph::{LocalValueId, OperationRole, ValueKey, ValueRef};
 
 use crate::LinearizedGraph;
 
@@ -43,8 +43,8 @@ pub fn try_linear_transpose<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    let mut builder = FragmentBuilder::<Op>::new();
-    let mut cotangent_env: HashMap<GlobalValKey<Op>, LocalValId> = HashMap::new();
+    let mut builder = GraphBuilder::<Op>::new();
+    let mut cotangent_env: HashMap<ValueKey<Op>, LocalValueId> = HashMap::new();
     let mut cotangent_seed_inputs = Vec::new();
     let graph = linear.as_graph();
 
@@ -53,18 +53,18 @@ where
             continue;
         };
 
-        let source_key = graph.vals()[*tangent_output_id].key.clone();
+        let source_key = graph.values()[*tangent_output_id].key.clone();
         let seed_key = cotangent_seed_key(linear, index);
         let seed_id = builder.add_input(seed_key.clone());
         cotangent_env.insert(source_key, seed_id);
         cotangent_seed_inputs.push((seed_key, seed_id));
     }
 
-    for op_node in graph.ops().iter().rev() {
-        let cotangent_out: Vec<Option<LocalValId>> = op_node
+    for op_node in graph.operations().iter().rev() {
+        let cotangent_out: Vec<Option<LocalValueId>> = op_node
             .outputs
             .iter()
-            .map(|output_id| cotangent_env.get(&graph.vals()[*output_id].key).copied())
+            .map(|output_id| cotangent_env.get(&graph.values()[*output_id].key).copied())
             .collect();
         if cotangent_out.iter().all(Option::is_none) {
             continue;
@@ -74,26 +74,26 @@ where
             .inputs
             .iter()
             .map(|input| match input {
-                ValRef::Local(local_id) => {
-                    PrimitiveValue::External(graph.vals()[*local_id].key.clone())
+                ValueRef::Local(local_id) => {
+                    PrimitiveValue::External(graph.values()[*local_id].key.clone())
                 }
-                ValRef::External(key) => PrimitiveValue::External(key.clone()),
+                ValueRef::External(key) => PrimitiveValue::External(key.clone()),
             })
             .collect();
 
-        let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
-        let cotangent_in = op_node.op.try_linear_transpose_rule(
+        let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
+        let cotangent_in = op_node.operation.try_linear_transpose_rule(
             &mut primitive_builder,
             &cotangent_out,
             &rule_inputs,
-            &op_node.mode,
+            &op_node.role,
             ctx,
         )?;
         assert_eq!(
             cotangent_in.len(),
             rule_inputs.len(),
             "transpose_rule for {:?} returned {} cotangents for {} inputs",
-            op_node.op,
+            op_node.operation,
             cotangent_in.len(),
             rule_inputs.len()
         );
@@ -111,14 +111,14 @@ where
 
             match cotangent_env.get(&input_key).copied() {
                 Some(existing_id) => {
-                    let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
+                    let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
                     let sum = primitive_builder.add_primitive(
                         Op::add(),
                         vec![
                             PrimitiveValue::Local(existing_id),
                             PrimitiveValue::Local(cotangent_id),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true, true],
                         },
                     );
@@ -131,15 +131,15 @@ where
         }
     }
 
-    let tangent_outputs: Vec<Option<LocalValId>> = linear
+    let tangent_outputs: Vec<Option<LocalValueId>> = linear
         .tangent_inputs()
         .iter()
         .map(|(_, tangent_input_id)| {
-            let tangent_input_key = &graph.vals()[*tangent_input_id].key;
+            let tangent_input_key = &graph.values()[*tangent_input_id].key;
             cotangent_env.get(tangent_input_key).copied()
         })
         .collect();
-    let active_outputs: Vec<LocalValId> = tangent_outputs.iter().filter_map(|id| *id).collect();
+    let active_outputs: Vec<LocalValueId> = tangent_outputs.iter().filter_map(|id| *id).collect();
     if !active_outputs.is_empty() {
         builder.set_outputs(active_outputs);
     }
@@ -155,29 +155,29 @@ where
 pub fn try_linear_transpose_with_builder<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
     builder: &mut impl PrimitiveBuilder<Op>,
-    cotangent_seeds: &[Option<LocalValId>],
+    cotangent_seeds: &[Option<LocalValueId>],
     ctx: &mut Op::ADContext,
-) -> ADRuleResult<Vec<Option<LocalValId>>>
+) -> ADRuleResult<Vec<Option<LocalValueId>>>
 where
     Op::InputKey: ADKey,
 {
-    let mut cotangent_env: HashMap<GlobalValKey<Op>, LocalValId> = HashMap::new();
+    let mut cotangent_env: HashMap<ValueKey<Op>, LocalValueId> = HashMap::new();
     let graph = linear.as_graph();
 
     for (index, maybe_tangent_output) in linear.tangent_outputs().iter().enumerate() {
         if let (Some(output_id), Some(Some(seed_id))) =
             (maybe_tangent_output, cotangent_seeds.get(index))
         {
-            let key = graph.vals()[*output_id].key.clone();
+            let key = graph.values()[*output_id].key.clone();
             cotangent_env.insert(key, *seed_id);
         }
     }
 
-    for op_node in graph.ops().iter().rev() {
-        let cotangent_out: Vec<Option<LocalValId>> = op_node
+    for op_node in graph.operations().iter().rev() {
+        let cotangent_out: Vec<Option<LocalValueId>> = op_node
             .outputs
             .iter()
-            .map(|output_id| cotangent_env.get(&graph.vals()[*output_id].key).copied())
+            .map(|output_id| cotangent_env.get(&graph.values()[*output_id].key).copied())
             .collect();
         if cotangent_out.iter().all(Option::is_none) {
             continue;
@@ -187,25 +187,25 @@ where
             .inputs
             .iter()
             .map(|input| match input {
-                ValRef::Local(local_id) => {
-                    PrimitiveValue::External(graph.vals()[*local_id].key.clone())
+                ValueRef::Local(local_id) => {
+                    PrimitiveValue::External(graph.values()[*local_id].key.clone())
                 }
-                ValRef::External(key) => PrimitiveValue::External(key.clone()),
+                ValueRef::External(key) => PrimitiveValue::External(key.clone()),
             })
             .collect();
 
-        let cotangent_in = op_node.op.try_linear_transpose_rule(
+        let cotangent_in = op_node.operation.try_linear_transpose_rule(
             builder,
             &cotangent_out,
             &rule_inputs,
-            &op_node.mode,
+            &op_node.role,
             ctx,
         )?;
         assert_eq!(
             cotangent_in.len(),
             rule_inputs.len(),
             "transpose_rule for {:?} returned {} cotangents for {} inputs",
-            op_node.op,
+            op_node.operation,
             cotangent_in.len(),
             rule_inputs.len()
         );
@@ -229,7 +229,7 @@ where
                             PrimitiveValue::Local(existing_id),
                             PrimitiveValue::Local(cotangent_id),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true, true],
                         },
                     );
@@ -246,7 +246,7 @@ where
         .tangent_inputs()
         .iter()
         .map(|(_, tangent_input_id)| {
-            let tangent_input_key = &graph.vals()[*tangent_input_id].key;
+            let tangent_input_key = &graph.values()[*tangent_input_id].key;
             cotangent_env.get(tangent_input_key).copied()
         })
         .collect())

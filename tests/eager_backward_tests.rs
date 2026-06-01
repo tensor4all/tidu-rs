@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use computegraph::fragment::FragmentBuilder;
+use computegraph::graph::GraphBuilder;
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::eager::{self, BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder};
 use tidu::{
     linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
@@ -44,24 +44,24 @@ enum ScalarOp {
     Neg,
 }
 
-impl computegraph::GraphOp for ScalarOp {
+impl computegraph::GraphOperation for ScalarOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add | Self::Mul => 2,
             Self::Neg => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for ScalarOp {
+impl EvaluableGraphOperation for ScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             Self::Add => vec![inputs[0] + inputs[1]],
@@ -81,11 +81,11 @@ impl Primitive for ScalarOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        primal_in: &[ValueKey<Self>],
+        _primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => scalar_add_tangents(builder, tangent_in),
             Self::Mul => {
@@ -97,7 +97,7 @@ impl Primitive for ScalarOp {
                             PrimitiveValue::Local(dx),
                             PrimitiveValue::External(primal_in[1].clone()),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true, false],
                         },
                     );
@@ -110,7 +110,7 @@ impl Primitive for ScalarOp {
                             PrimitiveValue::External(primal_in[0].clone()),
                             PrimitiveValue::Local(dy),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![false, true],
                         },
                     );
@@ -124,7 +124,7 @@ impl Primitive for ScalarOp {
                     let out = builder.add_primitive(
                         Self::Neg,
                         vec![PrimitiveValue::Local(dx)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true],
                         },
                     );
@@ -137,24 +137,24 @@ impl Primitive for ScalarOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.n_inputs()],
+            None => return vec![None; self.input_count()],
         };
 
         match self {
             Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => scalar_transpose_mul(builder, inputs, ct, mode),
+            Self::Mul => scalar_transpose_mul(builder, inputs, ct, role),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
                     vec![PrimitiveValue::Local(ct)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );
@@ -166,16 +166,16 @@ impl Primitive for ScalarOp {
 
 fn scalar_add_tangents(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
-    tangent_in: &[Option<LocalValId>],
-) -> Vec<Option<LocalValId>> {
+    tangent_in: &[Option<LocalValueId>],
+) -> Vec<Option<LocalValueId>> {
     let terms: Vec<_> = tangent_in.iter().filter_map(|id| *id).collect();
     scalar_sum_terms(builder, terms)
 }
 
 fn scalar_sum_terms(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
-    terms: Vec<LocalValId>,
-) -> Vec<Option<LocalValId>> {
+    terms: Vec<LocalValueId>,
+) -> Vec<Option<LocalValueId>> {
     match terms.as_slice() {
         [] => vec![None],
         [only] => vec![Some(*only)],
@@ -185,7 +185,7 @@ fn scalar_sum_terms(
                 let out = builder.add_primitive(
                     ScalarOp::Add,
                     vec![PrimitiveValue::Local(acc), PrimitiveValue::Local(*term)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true, true],
                     },
                 );
@@ -199,19 +199,19 @@ fn scalar_sum_terms(
 fn scalar_transpose_mul(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
     inputs: &[PrimitiveValue<ScalarOp>],
-    ct: LocalValId,
-    mode: &OpMode,
-) -> Vec<Option<LocalValId>> {
-    let active_mask = match mode {
-        OpMode::Linear { active_mask } => active_mask,
-        OpMode::Primal => return vec![None, None],
+    ct: LocalValueId,
+    role: &OperationRole,
+) -> Vec<Option<LocalValueId>> {
+    let active_mask = match role {
+        OperationRole::Linearized { active_mask } => active_mask,
+        OperationRole::Primary => return vec![None, None],
     };
     let mut result = vec![None, None];
     if active_mask[0] {
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );
@@ -221,7 +221,7 @@ fn scalar_transpose_mul(
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );
@@ -236,19 +236,19 @@ enum TwoOutputOp {
     Split,
 }
 
-impl computegraph::GraphOp for TwoOutputOp {
+impl computegraph::GraphOperation for TwoOutputOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add => 2,
             Self::Split => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         match self {
             Self::Add => 1,
             Self::Split => 2,
@@ -256,7 +256,7 @@ impl computegraph::GraphOp for TwoOutputOp {
     }
 }
 
-impl EvalGraphOp for TwoOutputOp {
+impl EvaluableGraphOperation for TwoOutputOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             Self::Add => vec![inputs[0] + inputs[1]],
@@ -275,18 +275,18 @@ impl Primitive for TwoOutputOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        _primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        _primal_in: &[ValueKey<Self>],
+        _primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
                 (Some(lhs), Some(rhs)) => {
                     let sum = builder.add_primitive(
                         Self::Add,
                         vec![PrimitiveValue::Local(lhs), PrimitiveValue::Local(rhs)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true, true],
                         },
                     )[0];
@@ -303,7 +303,7 @@ impl Primitive for TwoOutputOp {
                 let doubled = builder.add_primitive(
                     Self::Add,
                     vec![PrimitiveValue::Local(dx), PrimitiveValue::Local(dx)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true, true],
                     },
                 )[0];
@@ -315,11 +315,11 @@ impl Primitive for TwoOutputOp {
     fn transpose_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         _inputs: &[PrimitiveValue<Self>],
-        _mode: &OpMode,
+        _mode: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => vec![cotangent_out[0], cotangent_out[0]],
             Self::Split => panic!("Split should be linearized before linear_transpose"),
@@ -327,29 +327,29 @@ impl Primitive for TwoOutputOp {
     }
 }
 
-struct TwoOutputEmitter {
+struct TwoOutputBuilder {
     locals: Vec<Arc<f64>>,
 }
 
-impl TwoOutputEmitter {
-    fn push_value(&mut self, value: Arc<f64>) -> LocalValId {
+impl TwoOutputBuilder {
+    fn push_value(&mut self, value: Arc<f64>) -> LocalValueId {
         let id = self.locals.len();
         self.locals.push(value);
         id
     }
 
-    fn value(&self, id: LocalValId) -> Arc<f64> {
+    fn value(&self, id: LocalValueId) -> Arc<f64> {
         self.locals[id].clone()
     }
 }
 
-impl PrimitiveBuilder<TwoOutputOp> for TwoOutputEmitter {
+impl PrimitiveBuilder<TwoOutputOp> for TwoOutputBuilder {
     fn add_primitive(
         &mut self,
         op: TwoOutputOp,
         inputs: Vec<PrimitiveValue<TwoOutputOp>>,
-        _mode: OpMode,
-    ) -> Vec<LocalValId> {
+        _mode: OperationRole,
+    ) -> Vec<LocalValueId> {
         let values: Vec<Arc<f64>> = inputs
             .iter()
             .map(|input| match input {
@@ -394,7 +394,7 @@ impl KeySource<TwoOutputOp> for TestKeySource {
 
 fn scalar_input(name: &str, value: f64, requires_grad: bool) -> EagerInput<ScalarOp> {
     EagerInput {
-        key: GlobalValKey::Input(sk(name)),
+        key: ValueKey::Input(sk(name)),
         trace: None,
         requires_grad,
         data: arc(value),
@@ -415,7 +415,7 @@ fn scalar_input_from_output(
 }
 
 struct PartialOutputCallbacks {
-    observed_fragment_outputs: usize,
+    observed_graph_outputs: usize,
     observed_seed_slots: usize,
 }
 
@@ -423,10 +423,10 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
     fn execute_forward(
         &mut self,
         graph: PrimitiveGraph<'_, TwoOutputOp>,
-        initial_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
-    ) -> HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>> {
-        let fragment = graph.as_graph();
-        self.observed_fragment_outputs = fragment.outputs().len();
+        initial_data: &HashMap<ValueKey<TwoOutputOp>, Arc<f64>>,
+    ) -> HashMap<ValueKey<TwoOutputOp>, Arc<f64>> {
+        let graph = graph.as_graph();
+        self.observed_graph_outputs = graph.outputs().len();
         initial_data.clone()
     }
 
@@ -434,24 +434,24 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
         &mut self,
         linear: &LinearizedGraph<TwoOutputOp>,
         cotangent_out: &[Option<Arc<f64>>],
-        _external_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
+        _external_data: &HashMap<ValueKey<TwoOutputOp>, Arc<f64>>,
         ctx: &mut <TwoOutputOp as Primitive>::ADContext,
     ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         self.observed_seed_slots = cotangent_out.len();
-        let mut emitter = TwoOutputEmitter { locals: Vec::new() };
-        let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
+        let mut builder = TwoOutputBuilder { locals: Vec::new() };
+        let cotangent_seed_ids: Vec<Option<LocalValueId>> = cotangent_out
             .iter()
             .map(|maybe_seed| {
                 maybe_seed
                     .as_ref()
-                    .map(|seed| emitter.push_value(seed.clone()))
+                    .map(|seed| builder.push_value(seed.clone()))
             })
             .collect();
 
-        try_linear_transpose_with_builder(linear, &mut emitter, &cotangent_seed_ids, ctx).map(
+        try_linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(
             |ids| {
                 ids.into_iter()
-                    .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                    .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
                     .collect()
             },
         )
@@ -462,26 +462,26 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
     }
 }
 
-struct ScalarEagerEmitter {
+struct ScalarEagerBuilder {
     locals: Vec<Arc<f64>>,
-    external_data: HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
+    external_data: HashMap<ValueKey<ScalarOp>, Arc<f64>>,
 }
 
-impl ScalarEagerEmitter {
-    fn new(external_data: HashMap<GlobalValKey<ScalarOp>, Arc<f64>>) -> Self {
+impl ScalarEagerBuilder {
+    fn new(external_data: HashMap<ValueKey<ScalarOp>, Arc<f64>>) -> Self {
         Self {
             locals: Vec::new(),
             external_data,
         }
     }
 
-    fn push_value(&mut self, value: Arc<f64>) -> LocalValId {
+    fn push_value(&mut self, value: Arc<f64>) -> LocalValueId {
         let id = self.locals.len();
         self.locals.push(value);
         id
     }
 
-    fn value(&self, id: LocalValId) -> Arc<f64> {
+    fn value(&self, id: LocalValueId) -> Arc<f64> {
         self.locals[id].clone()
     }
 
@@ -497,13 +497,13 @@ impl ScalarEagerEmitter {
     }
 }
 
-impl PrimitiveBuilder<ScalarOp> for ScalarEagerEmitter {
+impl PrimitiveBuilder<ScalarOp> for ScalarEagerBuilder {
     fn add_primitive(
         &mut self,
         op: ScalarOp,
         inputs: Vec<PrimitiveValue<ScalarOp>>,
-        _mode: OpMode,
-    ) -> Vec<LocalValId> {
+        _mode: OperationRole,
+    ) -> Vec<LocalValueId> {
         let resolved_inputs: Vec<Arc<f64>> = inputs
             .iter()
             .map(|input| self.resolve_primitive_input(input))
@@ -525,41 +525,41 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
     fn execute_forward(
         &mut self,
         graph: PrimitiveGraph<'_, ScalarOp>,
-        initial_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
-    ) -> HashMap<GlobalValKey<ScalarOp>, Arc<f64>> {
+        initial_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+    ) -> HashMap<ValueKey<ScalarOp>, Arc<f64>> {
         let mut all_values = initial_data.clone();
-        let fragment = graph.as_graph();
+        let graph = graph.as_graph();
 
-        for &input_id in fragment.inputs() {
-            let key = fragment.vals()[input_id].key.clone();
+        for &input_id in graph.inputs() {
+            let key = graph.values()[input_id].key.clone();
             all_values.entry(key).or_insert_with(|| arc(0.0));
         }
 
-        for op_node in fragment.ops() {
+        for op_node in graph.operations() {
             let resolved_inputs: Vec<Arc<f64>> = op_node
                 .inputs
                 .iter()
                 .map(|input| match input {
-                    ValRef::Local(local_id) => all_values
-                        .get(&fragment.vals()[*local_id].key)
+                    ValueRef::Local(local_id) => all_values
+                        .get(&graph.values()[*local_id].key)
                         .cloned()
                         .unwrap_or_else(|| {
                             panic!(
                                 "missing concrete value for local key {:?}",
-                                fragment.vals()[*local_id].key
+                                graph.values()[*local_id].key
                             )
                         }),
-                    ValRef::External(key) => all_values.get(key).cloned().unwrap_or_else(|| {
+                    ValueRef::External(key) => all_values.get(key).cloned().unwrap_or_else(|| {
                         panic!("missing concrete value for external key {:?}", key)
                     }),
                 })
                 .collect();
             let input_refs: Vec<&f64> =
                 resolved_inputs.iter().map(|value| value.as_ref()).collect();
-            let outputs = op_node.op.eval(&mut (), &input_refs);
+            let outputs = op_node.operation.eval(&mut (), &input_refs);
 
             for (output_id, output) in op_node.outputs.iter().zip(outputs) {
-                let key = fragment.vals()[*output_id].key.clone();
+                let key = graph.values()[*output_id].key.clone();
                 all_values.insert(key, Arc::new(output));
             }
         }
@@ -571,23 +571,23 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
         &mut self,
         linear: &LinearizedGraph<ScalarOp>,
         cotangent_out: &[Option<Arc<f64>>],
-        external_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
         ctx: &mut <ScalarOp as Primitive>::ADContext,
     ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
-        let mut emitter = ScalarEagerEmitter::new(external_data.clone());
-        let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
+        let mut builder = ScalarEagerBuilder::new(external_data.clone());
+        let cotangent_seed_ids: Vec<Option<LocalValueId>> = cotangent_out
             .iter()
             .map(|maybe_seed| {
                 maybe_seed
                     .as_ref()
-                    .map(|seed| emitter.push_value(seed.clone()))
+                    .map(|seed| builder.push_value(seed.clone()))
             })
             .collect();
 
-        try_linear_transpose_with_builder(linear, &mut emitter, &cotangent_seed_ids, ctx).map(
+        try_linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(
             |ids| {
                 ids.into_iter()
-                    .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                    .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
                     .collect()
             },
         )
@@ -600,13 +600,13 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
 
 #[test]
 fn try_linear_transpose_with_builder_propagates_add_cotangents() {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
-    let sum = builder.add_op(
+    let sum = builder.add_operation(
         ScalarOp::Add,
-        vec![ValRef::Local(x), ValRef::Local(y)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(y)],
+        OperationRole::Primary,
     );
     let sum_key = builder.global_key(sum[0]).clone();
     builder.set_outputs(vec![sum[0]]);
@@ -620,14 +620,14 @@ fn try_linear_transpose_with_builder_propagates_add_cotangents() {
         &HashMap::new(),
     );
 
-    let mut emitter = ScalarEagerEmitter::new(HashMap::new());
-    let seed = emitter.push_value(arc(1.0));
+    let mut builder = ScalarEagerBuilder::new(HashMap::new());
+    let seed = builder.push_value(arc(1.0));
     let cotangent_inputs =
-        try_linear_transpose_with_builder(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
+        try_linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
 
     let values: Vec<f64> = cotangent_inputs
         .into_iter()
-        .map(|maybe_id| *emitter.value(maybe_id.expect("active cotangent input")))
+        .map(|maybe_id| *builder.value(maybe_id.expect("active cotangent input")))
         .collect();
 
     assert_eq!(values, vec![1.0, 1.0]);
@@ -651,19 +651,13 @@ fn try_backward_orders_dependencies_before_output() {
     )
     .unwrap();
 
-    assert_eq!(
-        **cotangents.get(&GlobalValKey::Input(sk("a"))).unwrap(),
-        -1.0
-    );
-    assert_eq!(
-        **cotangents.get(&GlobalValKey::Input(sk("b"))).unwrap(),
-        -1.0
-    );
+    assert_eq!(**cotangents.get(&ValueKey::Input(sk("a"))).unwrap(), -1.0);
+    assert_eq!(**cotangents.get(&ValueKey::Input(sk("b"))).unwrap(), -1.0);
 }
 
 #[test]
 fn try_backward_accumulates_x_squared_gradient() {
-    let x_grad_key = GlobalValKey::Input(sk("x"));
+    let x_grad_key = ValueKey::Input(sk("x"));
     let inputs = vec![
         EagerInput {
             key: x_grad_key.clone(),
@@ -695,7 +689,7 @@ fn try_backward_accumulates_x_squared_gradient() {
 
 #[test]
 fn try_backward_linearizes_only_seeded_multi_output_slots() {
-    let grad_key = GlobalValKey::Input(sk("grad_x"));
+    let grad_key = ValueKey::Input(sk("grad_x"));
     let inputs = vec![EagerInput {
         key: grad_key.clone(),
         trace: None,
@@ -705,7 +699,7 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = recorder.record(TwoOutputOp::Split, &inputs, &[arc(3.0), arc(6.0)]);
     let mut callbacks = PartialOutputCallbacks {
-        observed_fragment_outputs: 0,
+        observed_graph_outputs: 0,
         observed_seed_slots: 0,
     };
 
@@ -718,7 +712,7 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
     )
     .unwrap();
 
-    assert_eq!(callbacks.observed_fragment_outputs, 1);
+    assert_eq!(callbacks.observed_graph_outputs, 1);
     assert_eq!(callbacks.observed_seed_slots, 1);
     assert_eq!(**cotangents.get(&grad_key).expect("gradient for x"), 2.0);
 }
@@ -728,12 +722,12 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
 #[test]
 fn try_linear_transpose_with_builder_fan_out_accumulation() {
     // Build linearized graph for x + x: tangent(x) used twice
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
-    let sum = builder.add_op(
+    let sum = builder.add_operation(
         ScalarOp::Add,
-        vec![ValRef::Local(x), ValRef::Local(x)], // x used twice (fan-out)
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(x)], // x used twice (fan-out)
+        OperationRole::Primary,
     );
     let sum_key = builder.global_key(sum[0]).clone();
     builder.set_outputs(vec![sum[0]]);
@@ -747,13 +741,13 @@ fn try_linear_transpose_with_builder_fan_out_accumulation() {
         &HashMap::new(),
     );
 
-    let mut emitter = ScalarEagerEmitter::new(HashMap::new());
-    let seed = emitter.push_value(arc(1.0));
+    let mut builder = ScalarEagerBuilder::new(HashMap::new());
+    let seed = builder.push_value(arc(1.0));
     let cotangent_inputs =
-        try_linear_transpose_with_builder(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
+        try_linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
 
     // df/dx = 2 (cotangent accumulated from two paths)
-    let dx = *emitter.value(cotangent_inputs[0].expect("active"));
+    let dx = *builder.value(cotangent_inputs[0].expect("active"));
     assert!(
         (dx - 2.0).abs() < 1e-12,
         "fan-out gradient: expected 2.0, got {dx}"

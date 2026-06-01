@@ -3,7 +3,7 @@ use std::hash::Hash;
 /// Unique identifier for a [`crate::linearize`] call.
 pub type DiffPassId = u64;
 
-/// Constraint on `GraphOp::InputKey` for AD use.
+/// Constraint on `GraphOperation::InputKey` for AD use.
 ///
 /// `tidu` uses this trait to generate tangent input keys during
 /// [`crate::linearize`].

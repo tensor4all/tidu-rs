@@ -4,10 +4,10 @@ mod common;
 
 use std::sync::Arc;
 
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::GraphOp;
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::GraphOperation;
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 define_ad_key!(CtxKey);
@@ -24,19 +24,19 @@ enum CountingOp {
     Identity,
 }
 
-impl GraphOp for CountingOp {
+impl GraphOperation for CountingOp {
     type Operand = f64;
     type Context = ();
     type InputKey = CtxKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add => 2,
             Self::Identity => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
@@ -51,11 +51,11 @@ impl Primitive for CountingOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        _primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        _primal_in: &[ValueKey<Self>],
+        _primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         ctx: &mut CountingContext,
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         ctx.linearize_count += 1;
 
         match self {
@@ -65,7 +65,7 @@ impl Primitive for CountingOp {
                     let out = builder.add_primitive(
                         Self::Identity,
                         vec![PrimitiveValue::Local(dx)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true],
                         },
                     );
@@ -79,11 +79,11 @@ impl Primitive for CountingOp {
     fn transpose_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         _inputs: &[PrimitiveValue<Self>],
-        _mode: &OpMode,
+        _mode: &OperationRole,
         ctx: &mut CountingContext,
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         ctx.transpose_count += 1;
 
         match self {
@@ -100,14 +100,18 @@ fn ck(name: &str) -> CtxKey {
     CtxKey::User(name.to_string())
 }
 
-fn build_identity_chain() -> (Arc<Fragment<CountingOp>>, GlobalValKey<CountingOp>) {
-    let mut builder = FragmentBuilder::<CountingOp>::new();
+fn build_identity_chain() -> (Arc<Graph<CountingOp>>, ValueKey<CountingOp>) {
+    let mut builder = GraphBuilder::<CountingOp>::new();
     let x = builder.add_input(ck("x"));
-    let mid = builder.add_op(CountingOp::Identity, vec![ValRef::Local(x)], OpMode::Primal);
-    let out = builder.add_op(
+    let mid = builder.add_operation(
         CountingOp::Identity,
-        vec![ValRef::Local(mid[0])],
-        OpMode::Primal,
+        vec![ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    let out = builder.add_operation(
+        CountingOp::Identity,
+        vec![ValueRef::Local(mid[0])],
+        OperationRole::Primary,
     );
     let out_key = builder.global_key(out[0]).clone();
     builder.set_outputs(vec![out[0]]);

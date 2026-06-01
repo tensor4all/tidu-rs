@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use computegraph::types::OpMode;
+use computegraph::types::OperationRole;
 #[allow(unused_imports)]
 use tidu::PrimitiveValue;
 
@@ -12,17 +12,17 @@ macro_rules! transpose_add {
 
 #[macro_export]
 macro_rules! transpose_mul_real {
-    ($builder:expr, $OpMul:path, $inputs:expr, $ct:expr, $mode:expr) => {{
-        let active_mask = match $mode {
-            OpMode::Linear { active_mask } => active_mask,
-            OpMode::Primal => return vec![None, None],
+    ($builder:expr, $OpMul:path, $inputs:expr, $ct:expr, $role:expr) => {{
+        let active_mask = match $role {
+            OperationRole::Linearized { active_mask } => active_mask,
+            OperationRole::Primary => return vec![None, None],
         };
         let mut result = vec![None, None];
         if active_mask[0] {
             let out = $builder.add_primitive(
                 $OpMul,
                 vec![$inputs[1].clone(), PrimitiveValue::Local($ct)],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
             );
@@ -32,7 +32,7 @@ macro_rules! transpose_mul_real {
             let out = $builder.add_primitive(
                 $OpMul,
                 vec![$inputs[0].clone(), PrimitiveValue::Local($ct)],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
             );
@@ -44,17 +44,17 @@ macro_rules! transpose_mul_real {
 
 #[macro_export]
 macro_rules! transpose_mul_complex {
-    ($builder:expr, $OpMul:path, $OpConj:path, $inputs:expr, $ct:expr, $mode:expr) => {{
-        let active_mask = match $mode {
-            OpMode::Linear { active_mask } => active_mask,
-            OpMode::Primal => return vec![None, None],
+    ($builder:expr, $OpMul:path, $OpConj:path, $inputs:expr, $ct:expr, $role:expr) => {{
+        let active_mask = match $role {
+            OperationRole::Linearized { active_mask } => active_mask,
+            OperationRole::Primary => return vec![None, None],
         };
         let mut result = vec![None, None];
         if active_mask[0] {
             let conj_fixed = $builder.add_primitive(
                 $OpConj,
                 vec![$inputs[1].clone()],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false],
                 },
             );
@@ -64,7 +64,7 @@ macro_rules! transpose_mul_complex {
                     PrimitiveValue::Local(conj_fixed[0]),
                     PrimitiveValue::Local($ct),
                 ],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
             );
@@ -74,7 +74,7 @@ macro_rules! transpose_mul_complex {
             let conj_fixed = $builder.add_primitive(
                 $OpConj,
                 vec![$inputs[0].clone()],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false],
                 },
             );
@@ -84,7 +84,7 @@ macro_rules! transpose_mul_complex {
                     PrimitiveValue::Local(conj_fixed[0]),
                     PrimitiveValue::Local($ct),
                 ],
-                OpMode::Linear {
+                OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
             );
@@ -100,7 +100,7 @@ macro_rules! transpose_neg {
         let out = $builder.add_primitive(
             $OpNeg,
             vec![PrimitiveValue::Local($ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![true],
             },
         );
@@ -114,7 +114,7 @@ macro_rules! transpose_conj {
         let out = $builder.add_primitive(
             $OpConj,
             vec![PrimitiveValue::Local($ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![true],
             },
         );

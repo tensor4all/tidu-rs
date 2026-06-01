@@ -32,5 +32,8 @@ mod transpose;
 
 pub use differentiate::{differentiate, try_differentiate};
 pub use linear_fragment::LinearFragment;
-pub use rules::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
+pub use rules::{
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveBuilder, PrimitiveOp,
+    PrimitiveValue,
+};
 pub use transpose::{transpose, try_transpose};

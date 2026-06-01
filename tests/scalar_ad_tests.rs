@@ -126,7 +126,7 @@ fn jvp_x_plus_x() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let results = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[y_key, dy_key],
         &[(input_key("x"), 3.0), (dx_key, 1.0)],
     );
@@ -150,7 +150,7 @@ fn jvp_x_times_y() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let results = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[y_key, dy_key],
         &[(input_key("x"), 2.0), (input_key("y"), 3.0), (dx_key, 1.0)],
     );
@@ -174,7 +174,7 @@ fn jvp_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let results = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[y_key, dy_key],
         &[(input_key("x"), 1.0), (input_key("a"), 2.0), (dx_key, 1.0)],
     );
@@ -199,7 +199,7 @@ fn vjp_exp_ax() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), 1.0),
@@ -227,7 +227,7 @@ fn vjp_x_plus_x_times_x() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[(input_key("x"), 3.0), (ct_y_key, 1.0)],
     );
@@ -248,7 +248,7 @@ fn fof_x_squared() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
@@ -262,7 +262,7 @@ fn fof_x_squared() {
     let dx2_key = tangent_input_key(&linear_2, 0);
 
     let result = evaluate(
-        vec![primal, linear_1_fragment, Arc::new(linear_2.fragment)],
+        vec![primal, linear_1_fragment, Arc::new(linear_2.into_graph())],
         &[d2y_key],
         &[(input_key("x"), 3.0), (dx1_key, 1.0), (dx2_key, 1.0)],
     );
@@ -284,7 +284,7 @@ fn for_exp_ax() {
     let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_seed_key = tangent_input_key(&transposed, 0);
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
 
     let second_linear = differentiate(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
@@ -302,7 +302,7 @@ fn for_exp_ax() {
         vec![
             primal,
             transposed_fragment,
-            Arc::new(second_linear.fragment),
+            Arc::new(second_linear.into_graph()),
         ],
         &[d_ct_x_key],
         &[
@@ -332,7 +332,7 @@ fn numerical_gradient_exp_ax() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let vjp = evaluate(
-        vec![primal.clone(), Arc::new(transposed.fragment)],
+        vec![primal.clone(), Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), 1.0),

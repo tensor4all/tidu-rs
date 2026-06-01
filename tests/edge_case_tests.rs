@@ -767,7 +767,7 @@ fn multi_output_sincos_jvp_sum_matches_expected() {
     let dx_key = tangent_input_key(&linear, 0);
     let x = 1.0;
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[sum_key, dy_key],
         &[(ext_input_key("x"), x), (dx_key, 1.0)],
     );
@@ -794,7 +794,7 @@ fn multi_output_sincos_vjp_matches_expected() {
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let x = 1.0;
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (ext_input_key("x"), x),
@@ -821,7 +821,7 @@ fn multi_output_sincos_adjoint_consistency() {
     let dy_cos_key = tangent_output_key(&linear, 1).expect("active tangent output for cos");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let x = 1.0;
     let dx = 0.4;
@@ -837,7 +837,7 @@ fn multi_output_sincos_adjoint_consistency() {
     let ct_cos_key = tangent_input_key(&transposed, 1);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_x = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (ext_input_key("x"), x),
@@ -871,7 +871,7 @@ fn deep_chain_exp_10x() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
@@ -885,7 +885,7 @@ fn deep_chain_exp_10x() {
         ],
     )[0];
     let ct_x = evaluate(
-        vec![primal.clone(), Arc::new(transposed.fragment)],
+        vec![primal.clone(), Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (scalar_input_key("x"), x),
@@ -928,7 +928,7 @@ fn third_order_x_cubed() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
@@ -940,7 +940,7 @@ fn third_order_x_cubed() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
     let linear_3 = differentiate(
         &resolve(vec![
@@ -962,7 +962,7 @@ fn third_order_x_cubed() {
             primal,
             linear_1_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d3y_key],
         &[
@@ -989,7 +989,7 @@ fn fourth_order_x_fourth() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
@@ -1001,7 +1001,7 @@ fn fourth_order_x_fourth() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
     let linear_3 = differentiate(
         &resolve(vec![
@@ -1017,7 +1017,7 @@ fn fourth_order_x_fourth() {
     );
     let d3y_key = tangent_output_key(&linear_3, 0).expect("active third-order tangent output");
     let dx3_key = tangent_input_key(&linear_3, 0);
-    let linear_3_fragment = Arc::new(linear_3.fragment);
+    let linear_3_fragment = Arc::new(linear_3.into_graph());
 
     let linear_4 = differentiate(
         &resolve(vec![
@@ -1041,7 +1041,7 @@ fn fourth_order_x_fourth() {
             linear_1_fragment,
             linear_2_fragment,
             linear_3_fragment,
-            Arc::new(linear_4.fragment),
+            Arc::new(linear_4.into_graph()),
         ],
         &[d4y_key],
         &[
@@ -1070,7 +1070,7 @@ fn third_order_for_then_f() {
     let transposed = transpose(&linear, &mut ());
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_key = tangent_input_key(&transposed, 0);
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
@@ -1082,7 +1082,7 @@ fn third_order_for_then_f() {
     );
     let d_ct_x_key = tangent_output_key(&linear_2, 0).expect("active forward-over-reverse output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
     let linear_3 = differentiate(
         &resolve(vec![
@@ -1104,7 +1104,7 @@ fn third_order_for_then_f() {
             primal,
             transposed_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d2_ct_x_key],
         &[
@@ -1135,7 +1135,7 @@ fn fofof_vector_x_cubed() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
@@ -1147,7 +1147,7 @@ fn fofof_vector_x_cubed() {
     );
     let d2y_key = tangent_output_key(&linear_2, 0).expect("active second-order tangent output");
     let dx2_key = tangent_input_key(&linear_2, 0);
-    let linear_2_fragment = Arc::new(linear_2.fragment);
+    let linear_2_fragment = Arc::new(linear_2.into_graph());
 
     let linear_3 = differentiate(
         &resolve(vec![
@@ -1169,7 +1169,7 @@ fn fofof_vector_x_cubed() {
             primal,
             linear_1_fragment,
             linear_2_fragment,
-            Arc::new(linear_3.fragment),
+            Arc::new(linear_3.into_graph()),
         ],
         &[d3y_key],
         &[
@@ -1206,7 +1206,7 @@ fn fof_vector_adjoint_consistency() {
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_fof_key = tangent_input_key(&linear_1, 0);
     let transposed = transpose(&linear_1, &mut ());
-    let linear_1_fragment = Arc::new(linear_1.fragment);
+    let linear_1_fragment = Arc::new(linear_1.into_graph());
 
     let linear_2 = differentiate(
         &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
@@ -1222,7 +1222,7 @@ fn fof_vector_adjoint_consistency() {
         vec![
             primal.clone(),
             linear_1_fragment,
-            Arc::new(linear_2.fragment),
+            Arc::new(linear_2.into_graph()),
         ],
         &[d2y_key],
         &[
@@ -1235,7 +1235,7 @@ fn fof_vector_adjoint_consistency() {
 
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
     let linear_3 = differentiate(
         &resolve(vec![primal.clone(), transposed_fragment.clone()]),
         std::slice::from_ref(&ct_x_key),
@@ -1247,7 +1247,7 @@ fn fof_vector_adjoint_consistency() {
     let d_ct_x_key = tangent_output_key(&linear_3, 0).expect("active forward-over-reverse output");
     let dx1_for_key = tangent_input_key(&linear_3, 0);
     let for_result = evaluate(
-        vec![primal, transposed_fragment, Arc::new(linear_3.fragment)],
+        vec![primal, transposed_fragment, Arc::new(linear_3.into_graph())],
         &[d_ct_x_key],
         &[
             (vector_input_key("x"), x),
@@ -1279,7 +1279,7 @@ fn complex_vector_jvp_conj_elementwise() {
     let z = cvector(&[Complex64::new(1.0, 1.0), Complex64::new(2.0, 3.0)]);
     let dz = cvector(&[Complex64::new(0.5, 0.3), Complex64::new(0.7, 0.1)]);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[(complex_vector_input_key("z"), z), (dz_key, dz.clone())],
     );
@@ -1308,7 +1308,7 @@ fn complex_vector_vjp_sum_abs_squared() {
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let z = cvector(&[Complex64::new(1.0, 1.0), Complex64::new(2.0, 3.0)]);
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[
             (complex_vector_input_key("z"), z),
@@ -1337,7 +1337,7 @@ fn complex_vector_adjoint_consistency() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
     let transposed = transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.fragment);
+    let linear_fragment = Arc::new(linear.into_graph());
 
     let z = cvector(&[Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0)]);
     let dz = cvector(&[Complex64::new(0.2, -0.4), Complex64::new(-0.1, 0.3)]);
@@ -1355,7 +1355,7 @@ fn complex_vector_adjoint_consistency() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_z = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(complex_vector_input_key("z"), z), (ct_y_key, ct_y.clone())],
     )[0]

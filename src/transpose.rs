@@ -5,7 +5,7 @@ use crate::{ADKey, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
 use computegraph::fragment::FragmentBuilder;
 use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
-use crate::LinearFragment;
+use crate::LinearizedGraph;
 
 /// Transpose a linear fragment, reversing linear flow.
 ///
@@ -17,12 +17,12 @@ use crate::LinearFragment;
 /// ```ignore
 /// let mut ctx = ();
 /// let transposed = tidu::transpose(&linear_fragment, &mut ctx);
-/// assert_eq!(transposed.tangent_outputs.len(), linear_fragment.tangent_inputs.len());
+/// assert_eq!(transposed.tangent_outputs().len(), linear_fragment.tangent_inputs().len());
 /// ```
 pub fn transpose<Op: Primitive>(
-    linear: &LinearFragment<Op>,
+    linear: &LinearizedGraph<Op>,
     ctx: &mut Op::ADContext,
-) -> LinearFragment<Op>
+) -> LinearizedGraph<Op>
 where
     Op::InputKey: ADKey,
 {
@@ -37,37 +37,34 @@ where
 /// This returns [`crate::ADRuleError`] when a primitive cannot emit a
 /// transpose rule.
 pub fn try_transpose<Op: Primitive>(
-    linear: &LinearFragment<Op>,
+    linear: &LinearizedGraph<Op>,
     ctx: &mut Op::ADContext,
-) -> ADRuleResult<LinearFragment<Op>>
+) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {
     let mut builder = FragmentBuilder::<Op>::new();
     let mut cotangent_env: HashMap<GlobalValKey<Op>, LocalValId> = HashMap::new();
     let mut cotangent_seed_inputs = Vec::new();
+    let graph = linear.as_graph();
 
-    for (index, maybe_tangent_output) in linear.tangent_outputs.iter().enumerate() {
+    for (index, maybe_tangent_output) in linear.tangent_outputs().iter().enumerate() {
         let Some(tangent_output_id) = maybe_tangent_output else {
             continue;
         };
 
-        let source_key = linear.fragment.vals()[*tangent_output_id].key.clone();
+        let source_key = graph.vals()[*tangent_output_id].key.clone();
         let seed_key = cotangent_seed_key(linear, index);
         let seed_id = builder.add_input(seed_key.clone());
         cotangent_env.insert(source_key, seed_id);
         cotangent_seed_inputs.push((seed_key, seed_id));
     }
 
-    for op_node in linear.fragment.ops().iter().rev() {
+    for op_node in graph.ops().iter().rev() {
         let cotangent_out: Vec<Option<LocalValId>> = op_node
             .outputs
             .iter()
-            .map(|output_id| {
-                cotangent_env
-                    .get(&linear.fragment.vals()[*output_id].key)
-                    .copied()
-            })
+            .map(|output_id| cotangent_env.get(&graph.vals()[*output_id].key).copied())
             .collect();
         if cotangent_out.iter().all(Option::is_none) {
             continue;
@@ -78,7 +75,7 @@ where
             .iter()
             .map(|input| match input {
                 ValRef::Local(local_id) => {
-                    PrimitiveValue::External(linear.fragment.vals()[*local_id].key.clone())
+                    PrimitiveValue::External(graph.vals()[*local_id].key.clone())
                 }
                 ValRef::External(key) => PrimitiveValue::External(key.clone()),
             })
@@ -135,10 +132,10 @@ where
     }
 
     let tangent_outputs: Vec<Option<LocalValId>> = linear
-        .tangent_inputs
+        .tangent_inputs()
         .iter()
         .map(|(_, tangent_input_id)| {
-            let tangent_input_key = &linear.fragment.vals()[*tangent_input_id].key;
+            let tangent_input_key = &graph.vals()[*tangent_input_id].key;
             cotangent_env.get(tangent_input_key).copied()
         })
         .collect();
@@ -147,23 +144,23 @@ where
         builder.set_outputs(active_outputs);
     }
 
-    Ok(LinearFragment {
-        fragment: builder.build(),
-        tangent_inputs: cotangent_seed_inputs,
+    Ok(LinearizedGraph::from_parts(
+        builder.build(),
+        cotangent_seed_inputs,
         tangent_outputs,
-    })
+    ))
 }
 
-fn cotangent_seed_key<Op: Primitive>(linear: &LinearFragment<Op>, index: usize) -> Op::InputKey
+fn cotangent_seed_key<Op: Primitive>(linear: &LinearizedGraph<Op>, index: usize) -> Op::InputKey
 where
     Op::InputKey: ADKey,
 {
     assert!(
-        !linear.tangent_inputs.is_empty(),
+        !linear.tangent_inputs().is_empty(),
         "active tangent outputs require at least one tangent input to derive seed keys"
     );
 
-    let base_slot = index.min(linear.tangent_inputs.len() - 1);
-    let base_key = &linear.tangent_inputs[base_slot].0;
+    let base_slot = index.min(linear.tangent_inputs().len() - 1);
+    let base_key = &linear.tangent_inputs()[base_slot].0;
     base_key.tangent_of(u64::MAX - index as u64)
 }

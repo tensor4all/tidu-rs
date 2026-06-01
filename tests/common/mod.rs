@@ -7,7 +7,7 @@ use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode};
 use computegraph::{EvalGraphOp, GraphOp};
-use tidu::LinearFragment;
+use tidu::LinearizedGraph;
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 use crate::{
@@ -136,21 +136,24 @@ where
     program.eval(&mut Default::default(), &ordered_refs)
 }
 
-pub fn tangent_input_key<Op>(linear: &LinearFragment<Op>, index: usize) -> GlobalValKey<Op>
+pub fn tangent_input_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> GlobalValKey<Op>
 where
     Op: Primitive,
     Op::InputKey: ADKey,
 {
-    let local_id = linear.tangent_inputs[index].1;
-    linear.fragment.vals()[local_id].key.clone()
+    let local_id = linear.tangent_inputs()[index].1;
+    linear.as_graph().vals()[local_id].key.clone()
 }
 
-pub fn tangent_output_key<Op>(linear: &LinearFragment<Op>, index: usize) -> Option<GlobalValKey<Op>>
+pub fn tangent_output_key<Op>(
+    linear: &LinearizedGraph<Op>,
+    index: usize,
+) -> Option<GlobalValKey<Op>>
 where
     Op: Primitive,
     Op::InputKey: ADKey,
 {
-    linear.tangent_outputs[index].map(|local_id| linear.fragment.vals()[local_id].key.clone())
+    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().vals()[local_id].key.clone())
 }
 
 pub mod assertions;

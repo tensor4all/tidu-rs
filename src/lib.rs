@@ -26,12 +26,12 @@
 mod differentiate;
 pub mod eager;
 pub mod emit;
-mod linear_fragment;
+mod linearized_graph;
 pub mod rules;
 mod transpose;
 
 pub use differentiate::{differentiate, try_differentiate};
-pub use linear_fragment::LinearFragment;
+pub use linearized_graph::LinearizedGraph;
 pub use rules::{
     ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
     PrimitiveValue,

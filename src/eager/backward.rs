@@ -6,7 +6,7 @@ use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
 
-use crate::LinearFragment;
+use crate::LinearizedGraph;
 
 use super::trace::{Trace, TraceNode};
 
@@ -26,7 +26,7 @@ where
     /// Execute transpose for a linear fragment with concrete cotangent seeds.
     fn execute_transpose(
         &mut self,
-        linear: &LinearFragment<Op>,
+        linear: &LinearizedGraph<Op>,
         cotangent_out: &[Option<Arc<Op::Operand>>],
         external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
         ctx: &mut Op::ADContext,
@@ -71,7 +71,7 @@ where
         }
 
         let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
-        let all_values = executor.execute_forward(&linear.fragment, node.saved_data());
+        let all_values = executor.execute_forward(linear.as_graph(), node.saved_data());
         let cotangent_in =
             executor.execute_transpose(&linear, &active_cotangent_out, &all_values, ctx)?;
 
@@ -126,7 +126,7 @@ fn try_build_single_op_linear<Op: Primitive>(
     node: &TraceNode<Op>,
     output_slots: &[usize],
     ctx: &mut Op::ADContext,
-) -> ADRuleResult<LinearFragment<Op>>
+) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {

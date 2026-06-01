@@ -345,7 +345,7 @@ fn jvp_elementwise_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -377,7 +377,7 @@ fn vjp_elementwise_exp_ax() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -408,7 +408,7 @@ fn jvp_sum_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -440,7 +440,7 @@ fn vjp_sum_exp_ax_broadcasts_scalar_cotangent() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),
@@ -472,7 +472,7 @@ fn numerical_gradient_sum_exp_ax_matches_vjp() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_x_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let vjp = evaluate(
-        vec![primal.clone(), Arc::new(transposed.fragment)],
+        vec![primal.clone(), Arc::new(transposed.into_graph())],
         &[ct_x_key],
         &[
             (input_key("x"), vector(&[1.0, 2.0])),

@@ -280,7 +280,7 @@ fn jvp_conj_z() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[(input_key("z"), c(2.0, -3.0)), (dz_key, c(1.0, 1.0))],
     );
@@ -304,7 +304,7 @@ fn vjp_conj_z() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(input_key("z"), c(-0.5, 0.75)), (ct_y_key, c(1.0, 1.0))],
     );
@@ -332,7 +332,7 @@ fn jvp_z_times_w() {
     let dz = Complex64::new(0.5, -1.0);
     let dw = Complex64::new(-2.0, 1.5);
     let result = evaluate(
-        vec![primal, Arc::new(linear.fragment)],
+        vec![primal, Arc::new(linear.into_graph())],
         &[dy_key],
         &[
             (input_key("z"), C64(z)),
@@ -361,7 +361,7 @@ fn vjp_c_times_z_uses_conjugated_constant() {
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[
             (input_key("c"), c(2.0, 1.0)),
@@ -390,7 +390,7 @@ fn vjp_abs_squared_returns_two_z() {
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let z = Complex64::new(1.0, 2.0);
     let result = evaluate(
-        vec![primal, Arc::new(transposed.fragment)],
+        vec![primal, Arc::new(transposed.into_graph())],
         &[ct_z_key],
         &[(input_key("z"), C64(z)), (ct_y_key, c(1.0, 0.0))],
     );
@@ -412,7 +412,7 @@ fn numerical_gradient_exp_z_matches_vjp_for_real_and_imag_losses() {
     let transposed = transpose(&linear, &mut ());
     let ct_y_key = tangent_input_key(&transposed, 0);
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
-    let transposed_fragment = Arc::new(transposed.fragment);
+    let transposed_fragment = Arc::new(transposed.into_graph());
 
     let z = Complex64::new(0.4, -0.2);
     for seed in [Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)] {

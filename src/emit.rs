@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use crate::{ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
 use computegraph::{GlobalValKey, LocalValId, OpMode, ValRef};
 
-use crate::LinearFragment;
+use crate::LinearizedGraph;
 
 /// Execute the transpose of a linear fragment using a caller-provided emitter.
 ///
 /// This mirrors [`crate::try_transpose`] but leaves concrete execution and
 /// value storage to the downstream [`PrimitiveBuilder`].
 pub fn try_transpose_fragment<Op: Primitive>(
-    linear: &LinearFragment<Op>,
+    linear: &LinearizedGraph<Op>,
     builder: &mut impl PrimitiveBuilder<Op>,
     cotangent_seeds: &[Option<LocalValId>],
     ctx: &mut Op::ADContext,
@@ -19,25 +19,22 @@ where
     Op::InputKey: crate::ADKey,
 {
     let mut cotangent_env: HashMap<GlobalValKey<Op>, LocalValId> = HashMap::new();
+    let graph = linear.as_graph();
 
-    for (index, maybe_tangent_output) in linear.tangent_outputs.iter().enumerate() {
+    for (index, maybe_tangent_output) in linear.tangent_outputs().iter().enumerate() {
         if let (Some(output_id), Some(Some(seed_id))) =
             (maybe_tangent_output, cotangent_seeds.get(index))
         {
-            let key = linear.fragment.vals()[*output_id].key.clone();
+            let key = graph.vals()[*output_id].key.clone();
             cotangent_env.insert(key, *seed_id);
         }
     }
 
-    for op_node in linear.fragment.ops().iter().rev() {
+    for op_node in graph.ops().iter().rev() {
         let cotangent_out: Vec<Option<LocalValId>> = op_node
             .outputs
             .iter()
-            .map(|output_id| {
-                cotangent_env
-                    .get(&linear.fragment.vals()[*output_id].key)
-                    .copied()
-            })
+            .map(|output_id| cotangent_env.get(&graph.vals()[*output_id].key).copied())
             .collect();
         if cotangent_out.iter().all(Option::is_none) {
             continue;
@@ -48,7 +45,7 @@ where
             .iter()
             .map(|input| match input {
                 ValRef::Local(local_id) => {
-                    PrimitiveValue::External(linear.fragment.vals()[*local_id].key.clone())
+                    PrimitiveValue::External(graph.vals()[*local_id].key.clone())
                 }
                 ValRef::External(key) => PrimitiveValue::External(key.clone()),
             })
@@ -103,10 +100,10 @@ where
     }
 
     Ok(linear
-        .tangent_inputs
+        .tangent_inputs()
         .iter()
         .map(|(_, tangent_input_id)| {
-            let tangent_input_key = &linear.fragment.vals()[*tangent_input_id].key;
+            let tangent_input_key = &graph.vals()[*tangent_input_id].key;
             cotangent_env.get(tangent_input_key).copied()
         })
         .collect())

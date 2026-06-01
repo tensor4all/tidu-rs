@@ -7,7 +7,7 @@ use computegraph::fragment::FragmentBuilder;
 use computegraph::resolve::{ResolvedView, ValDef};
 use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
 
-use crate::LinearFragment;
+use crate::LinearizedGraph;
 
 /// Differentiate a resolved computation graph, producing a linear fragment.
 ///
@@ -25,7 +25,7 @@ use crate::LinearFragment;
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
 /// let linear = try_differentiate(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
-/// assert_eq!(linear.tangent_outputs.len(), 1);
+/// assert_eq!(linear.tangent_outputs().len(), 1);
 /// # Ok::<(), crate::ADRuleError>(())
 /// ```
 pub fn differentiate<Op: Primitive>(
@@ -35,7 +35,7 @@ pub fn differentiate<Op: Primitive>(
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
     aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-) -> LinearFragment<Op>
+) -> LinearizedGraph<Op>
 where
     Op::InputKey: ADKey,
 {
@@ -57,7 +57,7 @@ pub fn try_differentiate<Op: Primitive>(
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
     aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-) -> ADRuleResult<LinearFragment<Op>>
+) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {
@@ -149,11 +149,11 @@ where
         builder.set_outputs(active_outputs);
     }
 
-    Ok(LinearFragment {
-        fragment: builder.build(),
+    Ok(LinearizedGraph::from_parts(
+        builder.build(),
         tangent_inputs,
         tangent_outputs,
-    })
+    ))
 }
 
 fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<GlobalValKey<Op>> {

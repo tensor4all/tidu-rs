@@ -7,6 +7,11 @@ Downstream crates bring the operation set, local AD rules, and concrete runtime.
 `tidu` builds new graphs for linearization, transposed linear maps, and optional
 eager reverse-mode integration.
 
+## Name
+
+The name `tidu` comes from the Chinese word 梯度, whose pinyin romanization is
+`tidu` and whose meaning is "gradient".
+
 ## Where To Start
 
 - Read [Terminology](getting-started/terminology.md) if the graph transform

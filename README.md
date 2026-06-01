@@ -7,6 +7,11 @@ Downstream crates provide primitive operations, local AD rules, and concrete
 runtimes. tidu builds new graphs for linearization, transposed linear maps, and
 optional eager reverse-mode integration.
 
+## Name
+
+The name `tidu` comes from the Chinese word 梯度, whose pinyin romanization is
+`tidu` and whose meaning is "gradient".
+
 ## Who This Is For
 
 Read tidu docs if you are implementing a primitive operation set, AD rules, a
@@ -15,8 +20,4 @@ start with the downstream tensor/runtime crate that uses tidu.
 
 ## Documentation
 
-- [Getting started](docs/getting-started/index.md)
-- [Terminology](docs/getting-started/terminology.md)
-- [Tutorials](docs/tutorials/index.md)
-- [Guides](docs/guides/implementing-primitives.md)
-- [API map](docs/api/index.md)
+Hosted documentation: <https://tensor4all.org/tidu-rs/>

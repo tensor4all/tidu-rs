@@ -1,6 +1,6 @@
 project:
   type: website
-  output-dir: ../target/docs-site/design
+  output-dir: ../target/docs-site/docs
   render:
     - index.md
     - getting-started/*.md

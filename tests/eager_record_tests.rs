@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::fragment::Fragment;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp, OpEmitter};
-use tidu::eager::{self, BackwardExecutor, Input, KeySource as EagerKeySource, Recorder};
-use tidu::emit;
-use tidu::{ADKey, DiffPassId, PrimitiveOp};
+use computegraph::{EvalGraphOp, GraphOp};
+use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, Recorder};
+use tidu::{
+    try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
+    PrimitiveBuilder, PrimitiveValue,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
@@ -65,16 +67,16 @@ impl EvalGraphOp for RecorderOp {
     }
 }
 
-impl PrimitiveOp for RecorderOp {
+impl Primitive for RecorderOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         primal_in: &[GlobalValKey<Self>],
         _primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -85,9 +87,12 @@ impl PrimitiveOp for RecorderOp {
             Self::Mul => {
                 let mut terms = Vec::new();
                 if let Some(dx) = tangent_in[0] {
-                    let term = builder.add_op(
+                    let term = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::Local(dx), ValRef::External(primal_in[1].clone())],
+                        vec![
+                            PrimitiveValue::Local(dx),
+                            PrimitiveValue::External(primal_in[1].clone()),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![true, false],
                         },
@@ -95,9 +100,12 @@ impl PrimitiveOp for RecorderOp {
                     terms.push(term[0]);
                 }
                 if let Some(dy) = tangent_in[1] {
-                    let term = builder.add_op(
+                    let term = builder.add_primitive(
                         Self::Mul,
-                        vec![ValRef::External(primal_in[0].clone()), ValRef::Local(dy)],
+                        vec![
+                            PrimitiveValue::External(primal_in[0].clone()),
+                            PrimitiveValue::Local(dy),
+                        ],
                         OpMode::Linear {
                             active_mask: vec![false, true],
                         },
@@ -109,9 +117,9 @@ impl PrimitiveOp for RecorderOp {
             Self::Neg => tangent_in[0].map_or_else(
                 || vec![None],
                 |dx| {
-                    let out = builder.add_op(
+                    let out = builder.add_primitive(
                         Self::Neg,
-                        vec![ValRef::Local(dx)],
+                        vec![PrimitiveValue::Local(dx)],
                         OpMode::Linear {
                             active_mask: vec![true],
                         },
@@ -123,9 +131,9 @@ impl PrimitiveOp for RecorderOp {
                 let Some(dx) = tangent_in[0] else {
                     return vec![None, None];
                 };
-                let neg = builder.add_op(
+                let neg = builder.add_primitive(
                     Self::Neg,
-                    vec![ValRef::Local(dx)],
+                    vec![PrimitiveValue::Local(dx)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -138,9 +146,9 @@ impl PrimitiveOp for RecorderOp {
 
     fn transpose_rule(
         &self,
-        emitter: &mut impl OpEmitter<Self>,
+        emitter: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        inputs: &[ValRef<Self>],
+        inputs: &[PrimitiveValue<Self>],
         mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -153,9 +161,9 @@ impl PrimitiveOp for RecorderOp {
             Self::Add => vec![Some(ct), Some(ct)],
             Self::Mul => transpose_mul(emitter, inputs, ct, mode),
             Self::Neg => {
-                let out = emitter.add_op(
+                let out = emitter.add_primitive(
                     Self::Neg,
-                    vec![ValRef::Local(ct)],
+                    vec![PrimitiveValue::Local(ct)],
                     OpMode::Linear {
                         active_mask: vec![true],
                     },
@@ -169,7 +177,7 @@ impl PrimitiveOp for RecorderOp {
 }
 
 fn add_tangents(
-    builder: &mut FragmentBuilder<RecorderOp>,
+    builder: &mut impl PrimitiveBuilder<RecorderOp>,
     tangent_in: &[Option<LocalValId>],
 ) -> Vec<Option<LocalValId>> {
     let terms: Vec<_> = tangent_in.iter().filter_map(|id| *id).collect();
@@ -177,7 +185,7 @@ fn add_tangents(
 }
 
 fn sum_terms(
-    builder: &mut FragmentBuilder<RecorderOp>,
+    builder: &mut impl PrimitiveBuilder<RecorderOp>,
     terms: Vec<LocalValId>,
 ) -> Vec<Option<LocalValId>> {
     match terms.as_slice() {
@@ -186,9 +194,9 @@ fn sum_terms(
         [first, rest @ ..] => {
             let mut acc = *first;
             for term in rest {
-                let out = builder.add_op(
+                let out = builder.add_primitive(
                     RecorderOp::Add,
-                    vec![ValRef::Local(acc), ValRef::Local(*term)],
+                    vec![PrimitiveValue::Local(acc), PrimitiveValue::Local(*term)],
                     OpMode::Linear {
                         active_mask: vec![true, true],
                     },
@@ -201,8 +209,8 @@ fn sum_terms(
 }
 
 fn transpose_mul(
-    emitter: &mut impl OpEmitter<RecorderOp>,
-    inputs: &[ValRef<RecorderOp>],
+    emitter: &mut impl PrimitiveBuilder<RecorderOp>,
+    inputs: &[PrimitiveValue<RecorderOp>],
     ct: LocalValId,
     mode: &OpMode,
 ) -> Vec<Option<LocalValId>> {
@@ -212,9 +220,9 @@ fn transpose_mul(
     };
     let mut result = vec![None, None];
     if active_mask[0] {
-        let out = emitter.add_op(
+        let out = emitter.add_primitive(
             RecorderOp::Mul,
-            vec![inputs[1].clone(), ValRef::Local(ct)],
+            vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
             OpMode::Linear {
                 active_mask: vec![false, true],
             },
@@ -222,9 +230,9 @@ fn transpose_mul(
         result[0] = Some(out[0]);
     }
     if active_mask[1] {
-        let out = emitter.add_op(
+        let out = emitter.add_primitive(
             RecorderOp::Mul,
-            vec![inputs[0].clone(), ValRef::Local(ct)],
+            vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
             OpMode::Linear {
                 active_mask: vec![false, true],
             },
@@ -235,11 +243,11 @@ fn transpose_mul(
 }
 
 #[derive(Default)]
-struct KeySource {
+struct TestKeySource {
     next: usize,
 }
 
-impl EagerKeySource<RecorderOp> for KeySource {
+impl KeySource<RecorderOp> for TestKeySource {
     fn fresh_input_key(&mut self) -> Key {
         let key = Key::User(format!("e{}", self.next));
         self.next += 1;
@@ -251,8 +259,8 @@ fn key(name: &str) -> GlobalValKey<RecorderOp> {
     GlobalValKey::Input(Key::User(name.to_string()))
 }
 
-fn eager_value(name: &str, value: f64, requires_grad: bool) -> Input<RecorderOp> {
-    Input {
+fn eager_value(name: &str, value: f64, requires_grad: bool) -> EagerInput<RecorderOp> {
+    EagerInput {
         key: key(name),
         trace: None,
         requires_grad,
@@ -283,10 +291,10 @@ impl EagerEmitter {
         self.locals[id].clone()
     }
 
-    fn resolve_input(&self, input: &ValRef<RecorderOp>) -> Arc<f64> {
+    fn resolve_primitive_input(&self, input: &PrimitiveValue<RecorderOp>) -> Arc<f64> {
         match input {
-            ValRef::Local(local_id) => self.value(*local_id),
-            ValRef::External(key) => self
+            PrimitiveValue::Local(local_id) => self.value(*local_id),
+            PrimitiveValue::External(key) => self
                 .external_data
                 .get(key)
                 .cloned()
@@ -295,16 +303,16 @@ impl EagerEmitter {
     }
 }
 
-impl OpEmitter<RecorderOp> for EagerEmitter {
-    fn add_op(
+impl PrimitiveBuilder<RecorderOp> for EagerEmitter {
+    fn add_primitive(
         &mut self,
         op: RecorderOp,
-        inputs: Vec<ValRef<RecorderOp>>,
+        inputs: Vec<PrimitiveValue<RecorderOp>>,
         _mode: OpMode,
     ) -> Vec<LocalValId> {
         let resolved: Vec<_> = inputs
             .iter()
-            .map(|input| self.resolve_input(input))
+            .map(|input| self.resolve_primitive_input(input))
             .collect();
         let refs: Vec<_> = resolved.iter().map(|value| value.as_ref()).collect();
         let outputs = op.eval(&mut (), &refs);
@@ -365,7 +373,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
 
     fn execute_transpose(
         &mut self,
-        linear: &tidu::LinearFragment<RecorderOp>,
+        linear: &LinearizedGraph<RecorderOp>,
         cotangent_out: &[Option<Arc<f64>>],
         external_data: &HashMap<GlobalValKey<RecorderOp>, Arc<f64>>,
         ctx: &mut (),
@@ -375,7 +383,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
             .iter()
             .map(|seed| seed.as_ref().map(|value| emitter.push(value.clone())))
             .collect();
-        emit::try_transpose_fragment(linear, &mut emitter, &seed_ids, ctx).map(|ids| {
+        try_linear_transpose_with_builder(linear, &mut emitter, &seed_ids, ctx).map(|ids| {
             ids.into_iter()
                 .map(|id| id.map(|id| emitter.value(id)))
                 .collect()
@@ -390,7 +398,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
 #[test]
 fn record_eager_binary_op_and_skips_inactive_input_cotangents() {
     let inputs = vec![eager_value("x", 3.0, true), eager_value("y", 4.0, false)];
-    let mut recorder = Recorder::new(KeySource::default());
+    let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = recorder.record(RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
     let mut callbacks = Callbacks::default();
     let cotangents = eager::try_backward(
@@ -416,7 +424,7 @@ fn record_eager_nary_op_builds_all_input_edges() {
         eager_value("b", 2.0, false),
         eager_value("c", 3.0, true),
     ];
-    let mut recorder = Recorder::new(KeySource::default());
+    let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = recorder.record(RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
     let mut callbacks = Callbacks::default();
     let cotangents = eager::try_backward(
@@ -439,7 +447,7 @@ fn record_eager_nary_op_builds_all_input_edges() {
 #[test]
 fn record_eager_multi_output_op_uses_one_node_and_seeds_nonzero_slot() {
     let inputs = vec![eager_value("x", 3.0, true)];
-    let mut recorder = Recorder::new(KeySource::default());
+    let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = recorder.record(RecorderOp::Split, &inputs, &[Arc::new(3.0), Arc::new(-3.0)]);
 
     assert_eq!(outputs.len(), 2);

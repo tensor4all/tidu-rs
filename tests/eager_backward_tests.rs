@@ -1,16 +1,33 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[allow(dead_code)]
-mod common;
-
-use common::{ScalarKey, ScalarOp};
 use computegraph::fragment::{Fragment, FragmentBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, OpEmitter};
-use tidu::eager::{self, BackwardExecutor, Input, KeySource, Recorder};
-use tidu::{differentiate, emit};
+use computegraph::{EvalGraphOp, GraphOp};
+use tidu::eager::{self, BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder};
+use tidu::{
+    linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
+    PrimitiveBuilder, PrimitiveValue,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ScalarKey {
+    User(String),
+    Tangent {
+        of: Box<ScalarKey>,
+        pass: DiffPassId,
+    },
+}
+
+impl ADKey for ScalarKey {
+    fn tangent_of(&self, pass: DiffPassId) -> Self {
+        Self::Tangent {
+            of: Box::new(self.clone()),
+            pass,
+        }
+    }
+}
 
 fn sk(name: &str) -> ScalarKey {
     ScalarKey::User(name.to_string())
@@ -18,6 +35,199 @@ fn sk(name: &str) -> ScalarKey {
 
 fn arc(value: f64) -> Arc<f64> {
     Arc::new(value)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ScalarOp {
+    Add,
+    Mul,
+    Neg,
+}
+
+impl computegraph::GraphOp for ScalarOp {
+    type Operand = f64;
+    type Context = ();
+    type InputKey = ScalarKey;
+
+    fn n_inputs(&self) -> usize {
+        match self {
+            Self::Add | Self::Mul => 2,
+            Self::Neg => 1,
+        }
+    }
+
+    fn n_outputs(&self) -> usize {
+        1
+    }
+}
+
+impl EvalGraphOp for ScalarOp {
+    fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
+        match self {
+            Self::Add => vec![inputs[0] + inputs[1]],
+            Self::Mul => vec![inputs[0] * inputs[1]],
+            Self::Neg => vec![-inputs[0]],
+        }
+    }
+}
+
+impl Primitive for ScalarOp {
+    type ADContext = ();
+
+    fn add() -> Self {
+        Self::Add
+    }
+
+    fn jvp_rule(
+        &self,
+        builder: &mut impl PrimitiveBuilder<Self>,
+        primal_in: &[GlobalValKey<Self>],
+        _primal_out: &[GlobalValKey<Self>],
+        tangent_in: &[Option<LocalValId>],
+        _ctx: &mut (),
+    ) -> Vec<Option<LocalValId>> {
+        match self {
+            Self::Add => scalar_add_tangents(builder, tangent_in),
+            Self::Mul => {
+                let mut terms = Vec::new();
+                if let Some(dx) = tangent_in[0] {
+                    let term = builder.add_primitive(
+                        Self::Mul,
+                        vec![
+                            PrimitiveValue::Local(dx),
+                            PrimitiveValue::External(primal_in[1].clone()),
+                        ],
+                        OpMode::Linear {
+                            active_mask: vec![true, false],
+                        },
+                    );
+                    terms.push(term[0]);
+                }
+                if let Some(dy) = tangent_in[1] {
+                    let term = builder.add_primitive(
+                        Self::Mul,
+                        vec![
+                            PrimitiveValue::External(primal_in[0].clone()),
+                            PrimitiveValue::Local(dy),
+                        ],
+                        OpMode::Linear {
+                            active_mask: vec![false, true],
+                        },
+                    );
+                    terms.push(term[0]);
+                }
+                scalar_sum_terms(builder, terms)
+            }
+            Self::Neg => tangent_in[0].map_or_else(
+                || vec![None],
+                |dx| {
+                    let out = builder.add_primitive(
+                        Self::Neg,
+                        vec![PrimitiveValue::Local(dx)],
+                        OpMode::Linear {
+                            active_mask: vec![true],
+                        },
+                    );
+                    vec![Some(out[0])]
+                },
+            ),
+        }
+    }
+
+    fn transpose_rule(
+        &self,
+        builder: &mut impl PrimitiveBuilder<Self>,
+        cotangent_out: &[Option<LocalValId>],
+        inputs: &[PrimitiveValue<Self>],
+        mode: &OpMode,
+        _ctx: &mut (),
+    ) -> Vec<Option<LocalValId>> {
+        let ct = match cotangent_out[0] {
+            Some(ct) => ct,
+            None => return vec![None; self.n_inputs()],
+        };
+
+        match self {
+            Self::Add => vec![Some(ct), Some(ct)],
+            Self::Mul => scalar_transpose_mul(builder, inputs, ct, mode),
+            Self::Neg => {
+                let out = builder.add_primitive(
+                    Self::Neg,
+                    vec![PrimitiveValue::Local(ct)],
+                    OpMode::Linear {
+                        active_mask: vec![true],
+                    },
+                );
+                vec![Some(out[0])]
+            }
+        }
+    }
+}
+
+fn scalar_add_tangents(
+    builder: &mut impl PrimitiveBuilder<ScalarOp>,
+    tangent_in: &[Option<LocalValId>],
+) -> Vec<Option<LocalValId>> {
+    let terms: Vec<_> = tangent_in.iter().filter_map(|id| *id).collect();
+    scalar_sum_terms(builder, terms)
+}
+
+fn scalar_sum_terms(
+    builder: &mut impl PrimitiveBuilder<ScalarOp>,
+    terms: Vec<LocalValId>,
+) -> Vec<Option<LocalValId>> {
+    match terms.as_slice() {
+        [] => vec![None],
+        [only] => vec![Some(*only)],
+        [first, rest @ ..] => {
+            let mut acc = *first;
+            for term in rest {
+                let out = builder.add_primitive(
+                    ScalarOp::Add,
+                    vec![PrimitiveValue::Local(acc), PrimitiveValue::Local(*term)],
+                    OpMode::Linear {
+                        active_mask: vec![true, true],
+                    },
+                );
+                acc = out[0];
+            }
+            vec![Some(acc)]
+        }
+    }
+}
+
+fn scalar_transpose_mul(
+    builder: &mut impl PrimitiveBuilder<ScalarOp>,
+    inputs: &[PrimitiveValue<ScalarOp>],
+    ct: LocalValId,
+    mode: &OpMode,
+) -> Vec<Option<LocalValId>> {
+    let active_mask = match mode {
+        OpMode::Linear { active_mask } => active_mask,
+        OpMode::Primal => return vec![None, None],
+    };
+    let mut result = vec![None, None];
+    if active_mask[0] {
+        let out = builder.add_primitive(
+            ScalarOp::Mul,
+            vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
+            OpMode::Linear {
+                active_mask: vec![false, true],
+            },
+        );
+        result[0] = Some(out[0]);
+    }
+    if active_mask[1] {
+        let out = builder.add_primitive(
+            ScalarOp::Mul,
+            vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
+            OpMode::Linear {
+                active_mask: vec![false, true],
+            },
+        );
+        result[1] = Some(out[0]);
+    }
+    result
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -55,16 +265,16 @@ impl EvalGraphOp for TwoOutputOp {
     }
 }
 
-impl tidu::PrimitiveOp for TwoOutputOp {
+impl Primitive for TwoOutputOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self::Add
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        builder: &mut FragmentBuilder<Self>,
+        builder: &mut impl PrimitiveBuilder<Self>,
         _primal_in: &[GlobalValKey<Self>],
         _primal_out: &[GlobalValKey<Self>],
         tangent_in: &[Option<LocalValId>],
@@ -73,9 +283,9 @@ impl tidu::PrimitiveOp for TwoOutputOp {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
                 (Some(lhs), Some(rhs)) => {
-                    let sum = builder.add_op(
+                    let sum = builder.add_primitive(
                         Self::Add,
-                        vec![ValRef::Local(lhs), ValRef::Local(rhs)],
+                        vec![PrimitiveValue::Local(lhs), PrimitiveValue::Local(rhs)],
                         OpMode::Linear {
                             active_mask: vec![true, true],
                         },
@@ -90,9 +300,9 @@ impl tidu::PrimitiveOp for TwoOutputOp {
                 let Some(dx) = tangent_in[0] else {
                     return vec![None, None];
                 };
-                let doubled = builder.add_op(
+                let doubled = builder.add_primitive(
                     Self::Add,
-                    vec![ValRef::Local(dx), ValRef::Local(dx)],
+                    vec![PrimitiveValue::Local(dx), PrimitiveValue::Local(dx)],
                     OpMode::Linear {
                         active_mask: vec![true, true],
                     },
@@ -104,9 +314,9 @@ impl tidu::PrimitiveOp for TwoOutputOp {
 
     fn transpose_rule(
         &self,
-        _builder: &mut impl OpEmitter<Self>,
+        _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValId>],
-        _inputs: &[ValRef<Self>],
+        _inputs: &[PrimitiveValue<Self>],
         _mode: &OpMode,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValId>> {
@@ -133,18 +343,18 @@ impl TwoOutputEmitter {
     }
 }
 
-impl OpEmitter<TwoOutputOp> for TwoOutputEmitter {
-    fn add_op(
+impl PrimitiveBuilder<TwoOutputOp> for TwoOutputEmitter {
+    fn add_primitive(
         &mut self,
         op: TwoOutputOp,
-        inputs: Vec<ValRef<TwoOutputOp>>,
+        inputs: Vec<PrimitiveValue<TwoOutputOp>>,
         _mode: OpMode,
     ) -> Vec<LocalValId> {
         let values: Vec<Arc<f64>> = inputs
             .iter()
             .map(|input| match input {
-                ValRef::Local(local_id) => self.value(*local_id),
-                ValRef::External(key) => {
+                PrimitiveValue::Local(local_id) => self.value(*local_id),
+                PrimitiveValue::External(key) => {
                     panic!("unexpected external input in two-output test: {key:?}")
                 }
             })
@@ -182,8 +392,8 @@ impl KeySource<TwoOutputOp> for TestKeySource {
     }
 }
 
-fn scalar_input(name: &str, value: f64, requires_grad: bool) -> Input<ScalarOp> {
-    Input {
+fn scalar_input(name: &str, value: f64, requires_grad: bool) -> EagerInput<ScalarOp> {
+    EagerInput {
         key: GlobalValKey::Input(sk(name)),
         trace: None,
         requires_grad,
@@ -192,11 +402,11 @@ fn scalar_input(name: &str, value: f64, requires_grad: bool) -> Input<ScalarOp> 
 }
 
 fn scalar_input_from_output(
-    output: &tidu::eager::Output<ScalarOp>,
+    output: &EagerOutput<ScalarOp>,
     value: f64,
     requires_grad: bool,
-) -> Input<ScalarOp> {
-    Input {
+) -> EagerInput<ScalarOp> {
+    EagerInput {
         key: output.key.clone(),
         trace: output.trace.clone(),
         requires_grad,
@@ -221,10 +431,10 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
 
     fn execute_transpose(
         &mut self,
-        linear: &tidu::LinearFragment<TwoOutputOp>,
+        linear: &LinearizedGraph<TwoOutputOp>,
         cotangent_out: &[Option<Arc<f64>>],
         _external_data: &HashMap<GlobalValKey<TwoOutputOp>, Arc<f64>>,
-        ctx: &mut <TwoOutputOp as tidu::PrimitiveOp>::ADContext,
+        ctx: &mut <TwoOutputOp as Primitive>::ADContext,
     ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         self.observed_seed_slots = cotangent_out.len();
         let mut emitter = TwoOutputEmitter { locals: Vec::new() };
@@ -237,11 +447,13 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
             })
             .collect();
 
-        emit::try_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx).map(|ids| {
-            ids.into_iter()
-                .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
-                .collect()
-        })
+        try_linear_transpose_with_builder(linear, &mut emitter, &cotangent_seed_ids, ctx).map(
+            |ids| {
+                ids.into_iter()
+                    .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                    .collect()
+            },
+        )
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -272,10 +484,10 @@ impl ScalarEagerEmitter {
         self.locals[id].clone()
     }
 
-    fn resolve_input(&self, input: &ValRef<ScalarOp>) -> Arc<f64> {
+    fn resolve_primitive_input(&self, input: &PrimitiveValue<ScalarOp>) -> Arc<f64> {
         match input {
-            ValRef::Local(local_id) => self.value(*local_id),
-            ValRef::External(key) => self
+            PrimitiveValue::Local(local_id) => self.value(*local_id),
+            PrimitiveValue::External(key) => self
                 .external_data
                 .get(key)
                 .cloned()
@@ -284,16 +496,16 @@ impl ScalarEagerEmitter {
     }
 }
 
-impl OpEmitter<ScalarOp> for ScalarEagerEmitter {
-    fn add_op(
+impl PrimitiveBuilder<ScalarOp> for ScalarEagerEmitter {
+    fn add_primitive(
         &mut self,
         op: ScalarOp,
-        inputs: Vec<ValRef<ScalarOp>>,
+        inputs: Vec<PrimitiveValue<ScalarOp>>,
         _mode: OpMode,
     ) -> Vec<LocalValId> {
         let resolved_inputs: Vec<Arc<f64>> = inputs
             .iter()
-            .map(|input| self.resolve_input(input))
+            .map(|input| self.resolve_primitive_input(input))
             .collect();
         let input_refs: Vec<&f64> = resolved_inputs.iter().map(|value| value.as_ref()).collect();
         let outputs = op.eval(&mut (), &input_refs);
@@ -355,10 +567,10 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
 
     fn execute_transpose(
         &mut self,
-        linear: &tidu::LinearFragment<ScalarOp>,
+        linear: &LinearizedGraph<ScalarOp>,
         cotangent_out: &[Option<Arc<f64>>],
         external_data: &HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
-        ctx: &mut <ScalarOp as tidu::PrimitiveOp>::ADContext,
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
     ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
         let mut emitter = ScalarEagerEmitter::new(external_data.clone());
         let cotangent_seed_ids: Vec<Option<LocalValId>> = cotangent_out
@@ -370,11 +582,13 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
             })
             .collect();
 
-        emit::try_transpose_fragment(linear, &mut emitter, &cotangent_seed_ids, ctx).map(|ids| {
-            ids.into_iter()
-                .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
-                .collect()
-        })
+        try_linear_transpose_with_builder(linear, &mut emitter, &cotangent_seed_ids, ctx).map(
+            |ids| {
+                ids.into_iter()
+                    .map(|maybe_id| maybe_id.map(|id| emitter.value(id)))
+                    .collect()
+            },
+        )
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -383,7 +597,7 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
 }
 
 #[test]
-fn emit_try_transpose_fragment_propagates_add_cotangents() {
+fn try_linear_transpose_with_builder_propagates_add_cotangents() {
     let mut builder = FragmentBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
@@ -395,7 +609,7 @@ fn emit_try_transpose_fragment_propagates_add_cotangents() {
     let sum_key = builder.global_key(sum[0]).clone();
     builder.set_outputs(vec![sum[0]]);
 
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![Arc::new(builder.build())]),
         &[sum_key],
         &[sk("x"), sk("y")],
@@ -407,7 +621,7 @@ fn emit_try_transpose_fragment_propagates_add_cotangents() {
     let mut emitter = ScalarEagerEmitter::new(HashMap::new());
     let seed = emitter.push_value(arc(1.0));
     let cotangent_inputs =
-        emit::try_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
+        try_linear_transpose_with_builder(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
 
     let values: Vec<f64> = cotangent_inputs
         .into_iter()
@@ -449,13 +663,13 @@ fn try_backward_orders_dependencies_before_output() {
 fn try_backward_accumulates_x_squared_gradient() {
     let x_grad_key = GlobalValKey::Input(sk("x"));
     let inputs = vec![
-        Input {
+        EagerInput {
             key: x_grad_key.clone(),
             trace: None,
             requires_grad: true,
             data: arc(3.0),
         },
-        Input {
+        EagerInput {
             key: x_grad_key.clone(),
             trace: None,
             requires_grad: true,
@@ -480,7 +694,7 @@ fn try_backward_accumulates_x_squared_gradient() {
 #[test]
 fn try_backward_linearizes_only_seeded_multi_output_slots() {
     let grad_key = GlobalValKey::Input(sk("grad_x"));
-    let inputs = vec![Input {
+    let inputs = vec![EagerInput {
         key: grad_key.clone(),
         trace: None,
         requires_grad: true,
@@ -508,10 +722,10 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
 }
 
 /// Fan-out test: f(x) = x + x, df/dx = 2.
-/// This exercises the cotangent accumulation (Op::add) path in emit transpose.
+/// This exercises the cotangent accumulation (Op::add) path in linear transpose.
 #[test]
-fn emit_try_transpose_fragment_fan_out_accumulation() {
-    // Build linear fragment for x + x: tangent(x) used twice
+fn try_linear_transpose_with_builder_fan_out_accumulation() {
+    // Build linearized graph for x + x: tangent(x) used twice
     let mut builder = FragmentBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let sum = builder.add_op(
@@ -522,7 +736,7 @@ fn emit_try_transpose_fragment_fan_out_accumulation() {
     let sum_key = builder.global_key(sum[0]).clone();
     builder.set_outputs(vec![sum[0]]);
 
-    let linear = differentiate(
+    let linear = linearize(
         &resolve(vec![Arc::new(builder.build())]),
         &[sum_key],
         &[sk("x")],
@@ -534,7 +748,7 @@ fn emit_try_transpose_fragment_fan_out_accumulation() {
     let mut emitter = ScalarEagerEmitter::new(HashMap::new());
     let seed = emitter.push_value(arc(1.0));
     let cotangent_inputs =
-        emit::try_transpose_fragment(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
+        try_linear_transpose_with_builder(&linear, &mut emitter, &[Some(seed)], &mut ()).unwrap();
 
     // df/dx = 2 (cotangent accumulated from two paths)
     let dx = *emitter.value(cotangent_inputs[0].expect("active"));

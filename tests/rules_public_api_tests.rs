@@ -1,12 +1,14 @@
-use computegraph::fragment::FragmentBuilder;
-use computegraph::{GlobalValKey, GraphOp, LocalValId, OpEmitter, OpMode, ValRef};
+use computegraph::{GlobalValKey, GraphOp, LocalValId, OpMode};
 use std::hint::black_box;
 use tidu::rules::{
     ADKey as ModuleADKey, ADRuleError as ModuleADRuleError, ADRuleKind as ModuleADRuleKind,
     ADRuleResult as ModuleADRuleResult, DiffPassId as ModuleDiffPassId,
-    PrimitiveOp as ModulePrimitiveOp,
+    Primitive as ModulePrimitive,
 };
-use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, PrimitiveOp};
+use tidu::{
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
+    PrimitiveValue,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
@@ -40,40 +42,40 @@ impl GraphOp for AddOp {
     }
 }
 
-impl PrimitiveOp for AddOp {
+impl Primitive for AddOp {
     type ADContext = ();
 
     fn add() -> Self {
         Self
     }
 
-    fn linearize(
+    fn jvp_rule(
         &self,
-        _builder: &mut FragmentBuilder<Self>,
-        _primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        _builder: &mut impl PrimitiveBuilder<Self>,
+        _primal_inputs: &[GlobalValKey<Self>],
+        _primal_outputs: &[GlobalValKey<Self>],
+        tangent_inputs: &[Option<LocalValId>],
         _ctx: &mut Self::ADContext,
     ) -> Vec<Option<LocalValId>> {
-        vec![tangent_in[0].or(tangent_in[1])]
+        vec![tangent_inputs[0].or(tangent_inputs[1])]
     }
 
     fn transpose_rule(
         &self,
-        _emitter: &mut impl OpEmitter<Self>,
-        cotangent_out: &[Option<LocalValId>],
-        _inputs: &[ValRef<Self>],
+        _builder: &mut impl PrimitiveBuilder<Self>,
+        cotangent_outputs: &[Option<LocalValId>],
+        _inputs: &[PrimitiveValue<Self>],
         _mode: &OpMode,
         _ctx: &mut Self::ADContext,
     ) -> Vec<Option<LocalValId>> {
-        vec![cotangent_out[0], cotangent_out[0]]
+        vec![cotangent_outputs[0], cotangent_outputs[0]]
     }
 }
 
 #[test]
 fn root_reexports_match_rules_module_contract() {
     fn assert_key<K: ADKey + ModuleADKey>() {}
-    fn assert_op<Op: PrimitiveOp + ModulePrimitiveOp>()
+    fn assert_primitive<Op: Primitive + ModulePrimitive>()
     where
         Op::InputKey: ADKey,
     {
@@ -86,25 +88,19 @@ fn root_reexports_match_rules_module_contract() {
     }
 
     assert_key::<Key>();
-    assert_op::<AddOp>();
+    assert_primitive::<AddOp>();
     let tangent = Key::Base("x").tangent_of(7);
     assert!(matches!(tangent, Key::Tangent { .. }));
     assert_eq!(assert_pass_id(7), 7);
-    assert_eq!(
-        ModuleADRuleKind::Linearize.as_str(),
-        ADRuleKind::Linearize.as_str()
-    );
+    assert_eq!(ModuleADRuleKind::Jvp.as_str(), ADRuleKind::Jvp.as_str());
     assert_eq!(ModuleADRuleKind::Transpose.as_str(), "transpose");
 
-    let err: ADRuleError = ModuleADRuleError::unsupported("test::op", ModuleADRuleKind::Linearize);
-    assert_eq!(
-        err.to_string(),
-        "unsupported linearize AD rule for test::op"
-    );
+    let err: ADRuleError = ModuleADRuleError::unsupported("test::op", ModuleADRuleKind::Jvp);
+    assert_eq!(err.to_string(), "unsupported jvp AD rule for test::op");
     assert!(std::error::Error::source(&err).is_none());
     let rule_fn: fn(&ADRuleError) -> ADRuleKind = ADRuleError::rule;
     let runtime_err = black_box(assert_result::<()>(Err(err)).unwrap_err());
-    assert_eq!(rule_fn(&runtime_err), ADRuleKind::Linearize);
+    assert_eq!(rule_fn(&runtime_err), ADRuleKind::Jvp);
 
     let transpose_err =
         ModuleADRuleError::unsupported("test::transpose", ModuleADRuleKind::Transpose);

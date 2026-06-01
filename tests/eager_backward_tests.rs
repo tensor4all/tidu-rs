@@ -558,7 +558,7 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
                 resolved_inputs.iter().map(|value| value.as_ref()).collect();
             let outputs = op_node.op.eval(&mut (), &input_refs);
 
-            for (output_id, output) in op_node.outputs.iter().zip(outputs.into_iter()) {
+            for (output_id, output) in op_node.outputs.iter().zip(outputs) {
                 let key = fragment.vals()[*output_id].key.clone();
                 all_values.insert(key, Arc::new(output));
             }

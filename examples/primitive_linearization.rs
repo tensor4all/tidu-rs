@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use computegraph::compile::compile;
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::materialize::materialize_merge;
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::{
     linear_transpose, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive, PrimitiveBuilder,
     PrimitiveValue,
@@ -39,24 +39,24 @@ enum ScalarOp {
     Exp,
 }
 
-impl GraphOp for ScalarOp {
+impl GraphOperation for ScalarOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add | Self::Mul => 2,
             Self::Neg | Self::Exp => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for ScalarOp {
+impl EvaluableGraphOperation for ScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             Self::Add => vec![inputs[0] + inputs[1]],
@@ -77,11 +77,11 @@ impl Primitive for ScalarOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_inputs: &[GlobalValKey<Self>],
-        primal_outputs: &[GlobalValKey<Self>],
-        tangent_inputs: &[Option<LocalValId>],
+        primal_inputs: &[ValueKey<Self>],
+        primal_outputs: &[ValueKey<Self>],
+        tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => sum_tangent_terms(builder, tangent_inputs.iter().filter_map(|id| *id)),
             Self::Mul => {
@@ -93,7 +93,7 @@ impl Primitive for ScalarOp {
                             PrimitiveValue::Local(dx),
                             PrimitiveValue::External(primal_inputs[1].clone()),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true, false],
                         },
                     );
@@ -106,7 +106,7 @@ impl Primitive for ScalarOp {
                             PrimitiveValue::External(primal_inputs[0].clone()),
                             PrimitiveValue::Local(dy),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![false, true],
                         },
                     );
@@ -120,7 +120,7 @@ impl Primitive for ScalarOp {
                     let out = builder.add_primitive(
                         Self::Neg,
                         vec![PrimitiveValue::Local(dx)],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![true],
                         },
                     );
@@ -135,7 +135,7 @@ impl Primitive for ScalarOp {
                             PrimitiveValue::External(primal_outputs[0].clone()),
                             PrimitiveValue::Local(dx),
                         ],
-                        OpMode::Linear {
+                        OperationRole::Linearized {
                             active_mask: vec![false, true],
                         },
                     );
@@ -150,23 +150,23 @@ impl Primitive for ScalarOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_outputs: &[Option<LocalValId>],
+        cotangent_outputs: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let Some(ct) = cotangent_outputs[0] else {
-            return vec![None; self.n_inputs()];
+            return vec![None; self.input_count()];
         };
 
         match self {
             Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => transpose_mul(builder, inputs, ct, mode),
+            Self::Mul => transpose_mul(builder, inputs, ct, role),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
                     vec![PrimitiveValue::Local(ct)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true],
                     },
                 );
@@ -181,14 +181,14 @@ fn sk(name: &str) -> ScalarKey {
     ScalarKey::User(name.to_string())
 }
 
-fn input_key(name: &str) -> GlobalValKey<ScalarOp> {
-    GlobalValKey::Input(sk(name))
+fn input_key(name: &str) -> ValueKey<ScalarOp> {
+    ValueKey::Input(sk(name))
 }
 
 fn sum_tangent_terms(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
-    terms: impl IntoIterator<Item = LocalValId>,
-) -> Vec<Option<LocalValId>> {
+    terms: impl IntoIterator<Item = LocalValueId>,
+) -> Vec<Option<LocalValueId>> {
     let terms: Vec<_> = terms.into_iter().collect();
     match terms.as_slice() {
         [] => vec![None],
@@ -199,7 +199,7 @@ fn sum_tangent_terms(
                 let out = builder.add_primitive(
                     ScalarOp::Add,
                     vec![PrimitiveValue::Local(acc), PrimitiveValue::Local(*term)],
-                    OpMode::Linear {
+                    OperationRole::Linearized {
                         active_mask: vec![true, true],
                     },
                 );
@@ -213,19 +213,19 @@ fn sum_tangent_terms(
 fn transpose_mul(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
     inputs: &[PrimitiveValue<ScalarOp>],
-    ct: LocalValId,
-    mode: &OpMode,
-) -> Vec<Option<LocalValId>> {
-    let active_mask = match mode {
-        OpMode::Linear { active_mask } => active_mask,
-        OpMode::Primal => return vec![None, None],
+    ct: LocalValueId,
+    role: &OperationRole,
+) -> Vec<Option<LocalValueId>> {
+    let active_mask = match role {
+        OperationRole::Linearized { active_mask } => active_mask,
+        OperationRole::Primary => return vec![None, None],
     };
     let mut result = vec![None, None];
     if active_mask[0] {
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );
@@ -235,7 +235,7 @@ fn transpose_mul(
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );
@@ -244,35 +244,35 @@ fn transpose_mul(
     result
 }
 
-fn build_x_squared() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_x_squared() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
-    let y = builder.add_op(
+    let y = builder.add_operation(
         ScalarOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(x)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(x)],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn tangent_input_key(linear: &LinearizedGraph<ScalarOp>, index: usize) -> GlobalValKey<ScalarOp> {
+fn tangent_input_key(linear: &LinearizedGraph<ScalarOp>, index: usize) -> ValueKey<ScalarOp> {
     let local_id = linear.tangent_inputs()[index].1;
-    linear.as_graph().vals()[local_id].key.clone()
+    linear.as_graph().values()[local_id].key.clone()
 }
 
 fn tangent_output_key(
     linear: &LinearizedGraph<ScalarOp>,
     index: usize,
-) -> Option<GlobalValKey<ScalarOp>> {
-    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().vals()[local_id].key.clone())
+) -> Option<ValueKey<ScalarOp>> {
+    linear.tangent_outputs()[index].map(|local_id| linear.as_graph().values()[local_id].key.clone())
 }
 
 fn evaluate(
-    roots: Vec<Arc<Fragment<ScalarOp>>>,
-    outputs: &[GlobalValKey<ScalarOp>],
-    bindings: &[(GlobalValKey<ScalarOp>, f64)],
+    roots: Vec<Arc<Graph<ScalarOp>>>,
+    outputs: &[ValueKey<ScalarOp>],
+    bindings: &[(ValueKey<ScalarOp>, f64)],
 ) -> Vec<f64> {
     let view = resolve(roots);
     let graph = materialize_merge(&view, outputs);

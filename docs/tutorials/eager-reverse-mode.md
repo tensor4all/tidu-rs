@@ -30,24 +30,24 @@ enum ScalarOp {
     Exp,
 }
 
-impl GraphOp for ScalarOp {
+impl GraphOperation for ScalarOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add | Self::Mul => 2,
             Self::Neg | Self::Exp => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for ScalarOp {
+impl EvaluableGraphOperation for ScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&f64]) -> Vec<f64> {
         match self {
             Self::Add => vec![inputs[0] + inputs[1]],
@@ -65,7 +65,7 @@ The eager path still relies on the same `Primitive` JVP and transpose rules as
 graph linearization. During backward, `tidu` builds small linearized graphs and
 asks the downstream executor to run their transposes. The multiply JVP emits
 `dx * y + x * dy`, and the multiply transpose rule maps an output cotangent
-back to each active input. `LocalValId` is the graph-local identifier returned
+back to each active input. `LocalValueId` is the graph-local identifier returned
 by the builder for values created while constructing transformed primitive
 computation graphs.
 
@@ -78,7 +78,7 @@ if let Some(dx) = tangent_inputs[0] {
             PrimitiveValue::Local(dx),
             PrimitiveValue::External(primal_inputs[1].clone()),
         ],
-        OpMode::Linear {
+        OperationRole::Linearized {
             active_mask: vec![true, false],
         },
     );
@@ -91,7 +91,7 @@ if let Some(dy) = tangent_inputs[1] {
             PrimitiveValue::External(primal_inputs[0].clone()),
             PrimitiveValue::Local(dy),
         ],
-        OpMode::Linear {
+        OperationRole::Linearized {
             active_mask: vec![false, true],
         },
     );
@@ -113,7 +113,7 @@ from the data map supplied by `tidu`:
 ```rust
 struct ScalarBuilder {
     locals: Vec<Arc<f64>>,
-    external_data: HashMap<GlobalValKey<ScalarOp>, Arc<f64>>,
+    external_data: HashMap<ValueKey<ScalarOp>, Arc<f64>>,
 }
 
 impl PrimitiveBuilder<ScalarOp> for ScalarBuilder {
@@ -121,8 +121,8 @@ impl PrimitiveBuilder<ScalarOp> for ScalarBuilder {
         &mut self,
         op: ScalarOp,
         inputs: Vec<PrimitiveValue<ScalarOp>>,
-        _mode: OpMode,
-    ) -> Vec<LocalValId> {
+        _mode: OperationRole,
+    ) -> Vec<LocalValueId> {
         let values: Vec<_> = inputs
             .iter()
             .map(|input| self.resolve_input(input))
@@ -142,12 +142,12 @@ concrete values. The example only defaults synthetic tangent inputs to zero:
 
 ```rust
 for &input_id in graph.inputs() {
-    let key = graph.vals()[input_id].key.clone();
+    let key = graph.values()[input_id].key.clone();
     if values.contains_key(&key) {
         continue;
     }
     match &key {
-        GlobalValKey::Input(ScalarKey::Tangent { .. }) => {
+        ValueKey::Input(ScalarKey::Tangent { .. }) => {
             values.insert(key, Arc::new(0.0));
         }
         _ => panic!("missing concrete value for graph input {key:?}"),

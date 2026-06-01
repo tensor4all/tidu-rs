@@ -7,10 +7,10 @@ use common::assertions::{
     assert_complex_approx_eq, assert_scalar_approx_eq, assert_tensor_approx_eq,
 };
 use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
-use computegraph::fragment::{Fragment, FragmentBuilder};
+use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
-use computegraph::types::{GlobalValKey, LocalValId, OpMode, ValRef};
-use computegraph::{EvalGraphOp, GraphOp};
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
 use tidu::{linear_transpose, linearize};
@@ -22,91 +22,103 @@ fn sk(name: &str) -> ScalarKey {
     ScalarKey::User(name.to_string())
 }
 
-fn scalar_input_key(name: &str) -> GlobalValKey<ScalarOp> {
-    GlobalValKey::Input(sk(name))
+fn scalar_input_key(name: &str) -> ValueKey<ScalarOp> {
+    ValueKey::Input(sk(name))
 }
 
-fn build_scalar_exp_ax() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_exp_ax() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let a = builder.add_input(sk("a"));
-    let ax = builder.add_op(
+    let ax = builder.add_operation(
         ScalarOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(a)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(a)],
+        OperationRole::Primary,
     );
-    let y = builder.add_op(ScalarOp::Exp, vec![ValRef::Local(ax[0])], OpMode::Primal);
+    let y = builder.add_operation(
+        ScalarOp::Exp,
+        vec![ValueRef::Local(ax[0])],
+        OperationRole::Primary,
+    );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_scalar_x_plus_x_times_x() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_x_plus_x_times_x() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
-    let sum = builder.add_op(
+    let sum = builder.add_operation(
         ScalarOp::Add,
-        vec![ValRef::Local(x), ValRef::Local(x)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(x)],
+        OperationRole::Primary,
     );
-    let y = builder.add_op(
+    let y = builder.add_operation(
         ScalarOp::Mul,
-        vec![ValRef::Local(sum[0]), ValRef::Local(x)],
-        OpMode::Primal,
+        vec![ValueRef::Local(sum[0]), ValueRef::Local(x)],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_scalar_inactive_exp_y() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_inactive_exp_y() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let _x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
-    let exp_y = builder.add_op(ScalarOp::Exp, vec![ValRef::Local(y)], OpMode::Primal);
+    let exp_y = builder.add_operation(
+        ScalarOp::Exp,
+        vec![ValueRef::Local(y)],
+        OperationRole::Primary,
+    );
     let exp_y_key = builder.global_key(exp_y[0]).clone();
     builder.set_outputs(vec![exp_y[0]]);
     (Arc::new(builder.build()), exp_y_key)
 }
 
-fn build_scalar_diamond_exp_x_plus_exp_x() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_diamond_exp_x_plus_exp_x() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
-    let exp_x = builder.add_op(ScalarOp::Exp, vec![ValRef::Local(x)], OpMode::Primal);
-    let y = builder.add_op(
+    let exp_x = builder.add_operation(
+        ScalarOp::Exp,
+        vec![ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    let y = builder.add_operation(
         ScalarOp::Add,
-        vec![ValRef::Local(exp_x[0]), ValRef::Local(exp_x[0])],
-        OpMode::Primal,
+        vec![ValueRef::Local(exp_x[0]), ValueRef::Local(exp_x[0])],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_scalar_x_times_y() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_x_times_y() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
-    let product = builder.add_op(
+    let product = builder.add_operation(
         ScalarOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(y)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(y)],
+        OperationRole::Primary,
     );
     let product_key = builder.global_key(product[0]).clone();
     builder.set_outputs(vec![product[0]]);
     (Arc::new(builder.build()), product_key)
 }
 
-fn build_scalar_identity() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_identity() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y_key = builder.global_key(x).clone();
     builder.set_outputs(vec![x]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_scalar_output_y() -> (Arc<Fragment<ScalarOp>>, GlobalValKey<ScalarOp>) {
-    let mut builder = FragmentBuilder::<ScalarOp>::new();
+fn build_scalar_output_y() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
     let _x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
     let y_key = builder.global_key(y).clone();
@@ -126,24 +138,24 @@ enum ComplexScalarOp {
     Conj,
 }
 
-impl GraphOp for ComplexScalarOp {
+impl GraphOperation for ComplexScalarOp {
     type Operand = C64;
     type Context = ();
     type InputKey = ComplexScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add | Self::Mul => 2,
             Self::Conj => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for ComplexScalarOp {
+impl EvaluableGraphOperation for ComplexScalarOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&C64]) -> Vec<C64> {
         match self {
             Self::Add => vec![C64(inputs[0].0 + inputs[1].0)],
@@ -163,11 +175,11 @@ impl Primitive for ComplexScalarOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        primal_in: &[ValueKey<Self>],
+        _primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => {
                 linearize_add!(builder, ComplexScalarOp::Add, tangent_in[0], tangent_in[1])
@@ -187,14 +199,14 @@ impl Primitive for ComplexScalarOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.n_inputs()],
+            None => return vec![None; self.input_count()],
         };
 
         match self {
@@ -205,7 +217,7 @@ impl Primitive for ComplexScalarOp {
                 ComplexScalarOp::Conj,
                 inputs,
                 ct,
-                mode
+                role
             ),
             Self::Conj => transpose_conj!(builder, ComplexScalarOp::Conj, ct),
         }
@@ -216,8 +228,8 @@ fn ck(name: &str) -> ComplexScalarKey {
     ComplexScalarKey::User(name.to_string())
 }
 
-fn complex_input_key(name: &str) -> GlobalValKey<ComplexScalarOp> {
-    GlobalValKey::Input(ck(name))
+fn complex_input_key(name: &str) -> ValueKey<ComplexScalarOp> {
+    ValueKey::Input(ck(name))
 }
 
 fn c(re: f64, im: f64) -> C64 {
@@ -228,37 +240,31 @@ fn complex_inner_product(lhs: &C64, rhs: &C64) -> f64 {
     (lhs.0.conj() * rhs.0).re
 }
 
-fn build_complex_abs_squared() -> (
-    Arc<Fragment<ComplexScalarOp>>,
-    GlobalValKey<ComplexScalarOp>,
-) {
-    let mut builder = FragmentBuilder::<ComplexScalarOp>::new();
+fn build_complex_abs_squared() -> (Arc<Graph<ComplexScalarOp>>, ValueKey<ComplexScalarOp>) {
+    let mut builder = GraphBuilder::<ComplexScalarOp>::new();
     let z = builder.add_input(ck("z"));
-    let conj_z = builder.add_op(
+    let conj_z = builder.add_operation(
         ComplexScalarOp::Conj,
-        vec![ValRef::Local(z)],
-        OpMode::Primal,
+        vec![ValueRef::Local(z)],
+        OperationRole::Primary,
     );
-    let y = builder.add_op(
+    let y = builder.add_operation(
         ComplexScalarOp::Mul,
-        vec![ValRef::Local(z), ValRef::Local(conj_z[0])],
-        OpMode::Primal,
+        vec![ValueRef::Local(z), ValueRef::Local(conj_z[0])],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
     (Arc::new(builder.build()), y_key)
 }
 
-fn build_complex_z_squared() -> (
-    Arc<Fragment<ComplexScalarOp>>,
-    GlobalValKey<ComplexScalarOp>,
-) {
-    let mut builder = FragmentBuilder::<ComplexScalarOp>::new();
+fn build_complex_z_squared() -> (Arc<Graph<ComplexScalarOp>>, ValueKey<ComplexScalarOp>) {
+    let mut builder = GraphBuilder::<ComplexScalarOp>::new();
     let z = builder.add_input(ck("z"));
-    let y = builder.add_op(
+    let y = builder.add_operation(
         ComplexScalarOp::Mul,
-        vec![ValRef::Local(z), ValRef::Local(z)],
-        OpMode::Primal,
+        vec![ValueRef::Local(z), ValueRef::Local(z)],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
@@ -276,21 +282,21 @@ enum VectorOp {
     Mul,
 }
 
-impl GraphOp for VectorOp {
+impl GraphOperation for VectorOp {
     type Operand = Tensor;
     type Context = ();
     type InputKey = VectorKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         2
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
 
-impl EvalGraphOp for VectorOp {
+impl EvaluableGraphOperation for VectorOp {
     fn eval(&self, _ctx: &mut (), inputs: &[&Tensor]) -> Vec<Tensor> {
         match self {
             Self::Add => vec![Tensor(&inputs[0].0 + &inputs[1].0)],
@@ -309,11 +315,11 @@ impl Primitive for VectorOp {
     fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        primal_in: &[GlobalValKey<Self>],
-        _primal_out: &[GlobalValKey<Self>],
-        tangent_in: &[Option<LocalValId>],
+        primal_in: &[ValueKey<Self>],
+        _primal_out: &[ValueKey<Self>],
+        tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         match self {
             Self::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
             Self::Mul => linearize_mul!(
@@ -330,19 +336,19 @@ impl Primitive for VectorOp {
     fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValId>],
+        cotangent_out: &[Option<LocalValueId>],
         inputs: &[PrimitiveValue<Self>],
-        mode: &OpMode,
+        role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValId>> {
+    ) -> Vec<Option<LocalValueId>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.n_inputs()],
+            None => return vec![None; self.input_count()],
         };
 
         match self {
             Self::Add => transpose_add!(ct),
-            Self::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, mode),
+            Self::Mul => transpose_mul_real!(builder, VectorOp::Mul, inputs, ct, role),
         }
     }
 }
@@ -351,8 +357,8 @@ fn vk(name: &str) -> VectorKey {
     VectorKey::User(name.to_string())
 }
 
-fn vector_input_key(name: &str) -> GlobalValKey<VectorOp> {
-    GlobalValKey::Input(vk(name))
+fn vector_input_key(name: &str) -> ValueKey<VectorOp> {
+    ValueKey::Input(vk(name))
 }
 
 fn vector(values: &[f64]) -> Tensor {
@@ -362,13 +368,13 @@ fn vector(values: &[f64]) -> Tensor {
     )
 }
 
-fn build_vector_x_squared() -> (Arc<Fragment<VectorOp>>, GlobalValKey<VectorOp>) {
-    let mut builder = FragmentBuilder::<VectorOp>::new();
+fn build_vector_x_squared() -> (Arc<Graph<VectorOp>>, ValueKey<VectorOp>) {
+    let mut builder = GraphBuilder::<VectorOp>::new();
     let x = builder.add_input(vk("x"));
-    let y = builder.add_op(
+    let y = builder.add_operation(
         VectorOp::Mul,
-        vec![ValRef::Local(x), ValRef::Local(x)],
-        OpMode::Primal,
+        vec![ValueRef::Local(x), ValueRef::Local(x)],
+        OperationRole::Primary,
     );
     let y_key = builder.global_key(y[0]).clone();
     builder.set_outputs(vec![y[0]]);
@@ -389,12 +395,12 @@ fn adjoint_consistency_exp_ax() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = linear_transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.into_graph());
+    let linear_graph = Arc::new(linear.into_graph());
 
     let dx = 0.7;
     let ct_y = 0.3;
     let dy = evaluate(
-        vec![primal.clone(), linear_fragment],
+        vec![primal.clone(), linear_graph],
         &[dy_key],
         &[
             (scalar_input_key("x"), 1.0),
@@ -434,12 +440,12 @@ fn adjoint_consistency_x_plus_x_times_x() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = linear_transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.into_graph());
+    let linear_graph = Arc::new(linear.into_graph());
 
     let dx = 0.5;
     let ct_y = 0.7;
     let dy = evaluate(
-        vec![primal.clone(), linear_fragment],
+        vec![primal.clone(), linear_graph],
         &[dy_key],
         &[(scalar_input_key("x"), 3.0), (dx_key, dx)],
     )[0];
@@ -471,12 +477,12 @@ fn adjoint_consistency_complex() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dz_key = tangent_input_key(&linear, 0);
     let transposed = linear_transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.into_graph());
+    let linear_graph = Arc::new(linear.into_graph());
 
     let dz = c(0.3, 0.4);
     let ct_y = c(0.5, 0.6);
     let dy = evaluate(
-        vec![primal.clone(), linear_fragment],
+        vec![primal.clone(), linear_graph],
         &[dy_key],
         &[(complex_input_key("z"), c(1.0, 2.0)), (dz_key, dz.clone())],
     )[0]
@@ -539,10 +545,10 @@ fn diamond_pattern_shared_subexpression() {
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = linear_transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.into_graph());
+    let linear_graph = Arc::new(linear.into_graph());
 
     let dy = evaluate(
-        vec![primal.clone(), linear_fragment],
+        vec![primal.clone(), linear_graph],
         &[dy_key],
         &[(scalar_input_key("x"), 1.0), (dx_key, 1.0)],
     )[0];
@@ -634,10 +640,10 @@ fn for_complex_z_squared() {
     let transposed = linear_transpose(&linear, &mut ());
     let ct_z_key = tangent_output_key(&transposed, 0).expect("active cotangent output");
     let ct_y_seed_key = tangent_input_key(&transposed, 0);
-    let transposed_fragment = Arc::new(transposed.into_graph());
+    let transposed_graph = Arc::new(transposed.into_graph());
 
     let second_linear = linearize(
-        &resolve(vec![primal.clone(), transposed_fragment.clone()]),
+        &resolve(vec![primal.clone(), transposed_graph.clone()]),
         std::slice::from_ref(&ct_z_key),
         &[ck("z")],
         109,
@@ -651,7 +657,7 @@ fn for_complex_z_squared() {
     let result = evaluate(
         vec![
             primal,
-            transposed_fragment,
+            transposed_graph,
             Arc::new(second_linear.into_graph()),
         ],
         &[d_ct_z_key],
@@ -679,10 +685,10 @@ fn jvp_identity() {
     let dy_key = tangent_output_key(&linear, 0).expect("identity should keep tangent active");
     let dx_key = tangent_input_key(&linear, 0);
     let transposed = linear_transpose(&linear, &mut ());
-    let linear_fragment = Arc::new(linear.into_graph());
+    let linear_graph = Arc::new(linear.into_graph());
 
     let dy = evaluate(
-        vec![primal.clone(), linear_fragment],
+        vec![primal.clone(), linear_graph],
         &[dy_key],
         &[(scalar_input_key("x"), 4.0), (dx_key, 1.0)],
     )[0];
@@ -739,10 +745,10 @@ fn fof_vector_x_squared() {
     );
     let dy_key = tangent_output_key(&linear_1, 0).expect("active first-order tangent output");
     let dx1_key = tangent_input_key(&linear_1, 0);
-    let linear_1_fragment = Arc::new(linear_1.into_graph());
+    let linear_1_graph = Arc::new(linear_1.into_graph());
 
     let linear_2 = linearize(
-        &resolve(vec![primal.clone(), linear_1_fragment.clone()]),
+        &resolve(vec![primal.clone(), linear_1_graph.clone()]),
         std::slice::from_ref(&dy_key),
         &[vk("x")],
         113,
@@ -753,7 +759,7 @@ fn fof_vector_x_squared() {
     let dx2_key = tangent_input_key(&linear_2, 0);
 
     let result = evaluate(
-        vec![primal, linear_1_fragment, Arc::new(linear_2.into_graph())],
+        vec![primal, linear_1_graph, Arc::new(linear_2.into_graph())],
         &[d2y_key],
         &[
             (vector_input_key("x"), vector(&[2.0, 3.0])),

@@ -1,62 +1,62 @@
-use computegraph::fragment::FragmentBuilder;
-use computegraph::{GraphOp, LocalValId, OpMode, ValRef};
+use computegraph::graph::GraphBuilder;
+use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueRef};
 
 /// Reference to a value available to a primitive AD rule.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum PrimitiveValue<Op: GraphOp> {
+pub enum PrimitiveValue<Op: GraphOperation> {
     /// Value produced inside the graph being built.
-    Local(LocalValId),
+    Local(LocalValueId),
     /// Value from the source primitive computation graph.
-    External(computegraph::GlobalValKey<Op>),
+    External(computegraph::ValueKey<Op>),
 }
 
-impl<Op: GraphOp> From<PrimitiveValue<Op>> for ValRef<Op> {
+impl<Op: GraphOperation> From<PrimitiveValue<Op>> for ValueRef<Op> {
     fn from(value: PrimitiveValue<Op>) -> Self {
         match value {
-            PrimitiveValue::Local(id) => ValRef::Local(id),
-            PrimitiveValue::External(key) => ValRef::External(key),
+            PrimitiveValue::Local(id) => ValueRef::Local(id),
+            PrimitiveValue::External(key) => ValueRef::External(key),
         }
     }
 }
 
-impl<Op: GraphOp> From<ValRef<Op>> for PrimitiveValue<Op> {
-    fn from(value: ValRef<Op>) -> Self {
+impl<Op: GraphOperation> From<ValueRef<Op>> for PrimitiveValue<Op> {
+    fn from(value: ValueRef<Op>) -> Self {
         match value {
-            ValRef::Local(id) => PrimitiveValue::Local(id),
-            ValRef::External(key) => PrimitiveValue::External(key),
+            ValueRef::Local(id) => PrimitiveValue::Local(id),
+            ValueRef::External(key) => PrimitiveValue::External(key),
         }
     }
 }
 
 /// Builder used by primitive JVP and transpose rules to append primitive applications.
-pub trait PrimitiveBuilder<Op: GraphOp> {
+pub trait PrimitiveBuilder<Op: GraphOperation> {
     /// Add one primitive application and return local ids for its outputs.
     fn add_primitive(
         &mut self,
         op: Op,
         inputs: Vec<PrimitiveValue<Op>>,
-        mode: OpMode,
-    ) -> Vec<LocalValId>;
+        role: OperationRole,
+    ) -> Vec<LocalValueId>;
 }
 
-pub(crate) struct FragmentPrimitiveBuilder<'a, Op: GraphOp> {
-    inner: &'a mut FragmentBuilder<Op>,
+pub(crate) struct GraphPrimitiveBuilder<'a, Op: GraphOperation> {
+    inner: &'a mut GraphBuilder<Op>,
 }
 
-impl<'a, Op: GraphOp> FragmentPrimitiveBuilder<'a, Op> {
-    pub(crate) fn new(inner: &'a mut FragmentBuilder<Op>) -> Self {
+impl<'a, Op: GraphOperation> GraphPrimitiveBuilder<'a, Op> {
+    pub(crate) fn new(inner: &'a mut GraphBuilder<Op>) -> Self {
         Self { inner }
     }
 }
 
-impl<Op: GraphOp> PrimitiveBuilder<Op> for FragmentPrimitiveBuilder<'_, Op> {
+impl<Op: GraphOperation> PrimitiveBuilder<Op> for GraphPrimitiveBuilder<'_, Op> {
     fn add_primitive(
         &mut self,
         op: Op,
         inputs: Vec<PrimitiveValue<Op>>,
-        mode: OpMode,
-    ) -> Vec<LocalValId> {
-        let inputs = inputs.into_iter().map(ValRef::from).collect();
-        self.inner.add_op(op, inputs, mode)
+        role: OperationRole,
+    ) -> Vec<LocalValueId> {
+        let inputs = inputs.into_iter().map(ValueRef::from).collect();
+        self.inner.add_operation(op, inputs, role)
     }
 }

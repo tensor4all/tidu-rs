@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{ADKey, Primitive};
-use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, OpMode};
+use computegraph::{GraphOperation, OperationKey, OperationRole, ValueKey};
 
 use super::trace::{Trace, TraceEdge, TraceNode};
 
 /// Input descriptor for recording one eager primitive execution.
-pub struct EagerInput<Op: GraphOp> {
+pub struct EagerInput<Op: GraphOperation> {
     /// User-visible eager value key used for cotangent accumulation.
-    pub key: GlobalValKey<Op>,
+    pub key: ValueKey<Op>,
     /// Trace node that produced this value, or `None` for leaves.
     pub trace: Option<Trace<Op>>,
     /// Whether this value participates in reverse-mode propagation.
@@ -19,9 +19,9 @@ pub struct EagerInput<Op: GraphOp> {
 }
 
 /// Per-output trace metadata returned by [`Recorder::record`].
-pub struct EagerOutput<Op: GraphOp> {
+pub struct EagerOutput<Op: GraphOperation> {
     /// User-visible eager output key.
-    pub key: GlobalValKey<Op>,
+    pub key: ValueKey<Op>,
     /// Shared trace node for all outputs when any input requires gradients.
     pub trace: Option<Trace<Op>>,
     /// Whether this output should be tracked by the downstream frontend.
@@ -31,7 +31,7 @@ pub struct EagerOutput<Op: GraphOp> {
 }
 
 /// Caller-provided source of stable eager value keys.
-pub trait KeySource<Op: GraphOp> {
+pub trait KeySource<Op: GraphOperation> {
     /// Return a fresh input key that has not been used for another eager value.
     fn fresh_input_key(&mut self) -> Op::InputKey;
 }
@@ -71,23 +71,23 @@ impl<K> Recorder<K> {
     {
         assert_eq!(
             inputs.len(),
-            op.n_inputs(),
+            op.input_count(),
             "Recorder::record for {:?} expected {} inputs, got {}",
             op,
-            op.n_inputs(),
+            op.input_count(),
             inputs.len()
         );
         assert_eq!(
             outputs.len(),
-            op.n_outputs(),
+            op.output_count(),
             "Recorder::record for {:?} expected {} outputs, got {}",
             op,
-            op.n_outputs(),
+            op.output_count(),
             outputs.len()
         );
         assert!(
             outputs.len() <= u8::MAX as usize + 1,
-            "Recorder::record for {:?} has too many outputs for GlobalValKey: {}",
+            "Recorder::record for {:?} has too many outputs for ValueKey: {}",
             op,
             outputs.len()
         );
@@ -128,62 +128,62 @@ impl<K> Recorder<K> {
     }
 }
 
-fn derived_output_key<Op: GraphOp>(
+fn derived_output_key<Op: GraphOperation>(
     op: &Op,
-    input_aliases: &[GlobalValKey<Op>],
+    input_aliases: &[ValueKey<Op>],
     output_slot: usize,
-) -> GlobalValKey<Op> {
+) -> ValueKey<Op> {
     assert!(
         output_slot <= u8::MAX as usize,
-        "output slot {} is too large for GlobalValKey",
+        "output slot {} is too large for ValueKey",
         output_slot
     );
 
-    GlobalValKey::Derived {
-        op: Arc::new(GlobalOpKey::new(
+    ValueKey::Derived {
+        operation: Arc::new(OperationKey::new(
             op.clone(),
             input_aliases.to_vec(),
-            OpMode::Primal,
+            OperationRole::Primary,
         )),
         output_slot: output_slot as u8,
     }
 }
 
-fn saved_forward_values<Op: GraphOp>(
+fn saved_forward_values<Op: GraphOperation>(
     op: &Op,
-    input_aliases: &[GlobalValKey<Op>],
+    input_aliases: &[ValueKey<Op>],
     inputs: &[EagerInput<Op>],
     outputs: &[Arc<Op::Operand>],
-) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>> {
+) -> HashMap<ValueKey<Op>, Arc<Op::Operand>> {
     assert_eq!(
         input_aliases.len(),
-        op.n_inputs(),
+        op.input_count(),
         "saved_forward_values for {:?} expected {} input aliases, got {}",
         op,
-        op.n_inputs(),
+        op.input_count(),
         input_aliases.len()
     );
     assert_eq!(
         inputs.len(),
-        op.n_inputs(),
+        op.input_count(),
         "saved_forward_values for {:?} expected {} inputs, got {}",
         op,
-        op.n_inputs(),
+        op.input_count(),
         inputs.len()
     );
     assert_eq!(
         outputs.len(),
-        op.n_outputs(),
+        op.output_count(),
         "saved_forward_values for {:?} expected {} outputs, got {}",
         op,
-        op.n_outputs(),
+        op.output_count(),
         outputs.len()
     );
     assert!(
         input_aliases
             .iter()
-            .all(|key| matches!(key, GlobalValKey::Input(_))),
-        "saved_forward_values for {:?} requires GlobalValKey::Input aliases",
+            .all(|key| matches!(key, ValueKey::Input(_))),
+        "saved_forward_values for {:?} requires ValueKey::Input aliases",
         op
     );
 
@@ -197,11 +197,11 @@ fn saved_forward_values<Op: GraphOp>(
     saved
 }
 
-fn fresh_value_keys<Op: GraphOp>(
+fn fresh_value_keys<Op: GraphOperation>(
     key_source: &mut impl KeySource<Op>,
     count: usize,
-) -> Vec<GlobalValKey<Op>> {
+) -> Vec<ValueKey<Op>> {
     (0..count)
-        .map(|_| GlobalValKey::Input(key_source.fresh_input_key()))
+        .map(|_| ValueKey::Input(key_source.fresh_input_key()))
         .collect()
 }

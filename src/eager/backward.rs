@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::{ADKey, ADRuleResult, Primitive};
-use computegraph::fragment::FragmentBuilder;
+use computegraph::graph::GraphBuilder;
 use computegraph::resolve::resolve;
-use computegraph::{GlobalValKey, GraphOp, OpMode, ValRef};
+use computegraph::{GraphOperation, OperationRole, ValueKey, ValueRef};
 
 use crate::{LinearizedGraph, PrimitiveGraph};
 
@@ -20,15 +20,15 @@ where
     fn execute_forward(
         &mut self,
         graph: PrimitiveGraph<'_, Op>,
-        initial_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
-    ) -> HashMap<GlobalValKey<Op>, Arc<Op::Operand>>;
+        initial_data: &HashMap<ValueKey<Op>, Arc<Op::Operand>>,
+    ) -> HashMap<ValueKey<Op>, Arc<Op::Operand>>;
 
     /// Run a transposed linear graph with concrete cotangent seeds.
     fn run_transposed_linear(
         &mut self,
         linear: &LinearizedGraph<Op>,
         cotangent_out: &[Option<Arc<Op::Operand>>],
-        external_data: &HashMap<GlobalValKey<Op>, Arc<Op::Operand>>,
+        external_data: &HashMap<ValueKey<Op>, Arc<Op::Operand>>,
         ctx: &mut Op::ADContext,
     ) -> ADRuleResult<Vec<Option<Arc<Op::Operand>>>>;
 
@@ -38,17 +38,17 @@ where
 
 /// Execute reverse-mode AD over an eager trace.
 pub fn try_backward<Op: Primitive>(
-    output_key: &GlobalValKey<Op>,
+    output_key: &ValueKey<Op>,
     output_trace: Option<&Trace<Op>>,
     seed: Arc<Op::Operand>,
     executor: &mut impl BackwardExecutor<Op>,
     ctx: &mut Op::ADContext,
-) -> ADRuleResult<HashMap<GlobalValKey<Op>, Arc<Op::Operand>>>
+) -> ADRuleResult<HashMap<ValueKey<Op>, Arc<Op::Operand>>>
 where
     Op::InputKey: ADKey,
 {
     let sorted_nodes = topo_sort_trace(output_trace);
-    let mut cotangents: HashMap<GlobalValKey<Op>, Arc<Op::Operand>> = HashMap::new();
+    let mut cotangents: HashMap<ValueKey<Op>, Arc<Op::Operand>> = HashMap::new();
     cotangents.insert(output_key.clone(), seed);
 
     for node in sorted_nodes.iter().rev() {
@@ -95,8 +95,10 @@ where
     Ok(cotangents)
 }
 
-fn topo_sort_trace<Op: GraphOp>(output_trace: Option<&Trace<Op>>) -> Vec<Arc<TraceNode<Op>>> {
-    fn visit<Op: GraphOp>(
+fn topo_sort_trace<Op: GraphOperation>(
+    output_trace: Option<&Trace<Op>>,
+) -> Vec<Arc<TraceNode<Op>>> {
+    fn visit<Op: GraphOperation>(
         node: &Arc<TraceNode<Op>>,
         visited: &mut HashSet<*const TraceNode<Op>>,
         order: &mut Vec<Arc<TraceNode<Op>>>,
@@ -131,28 +133,28 @@ fn try_build_single_op_linear<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    let mut builder = FragmentBuilder::new();
+    let mut builder = GraphBuilder::new();
 
     let input_local_ids: Vec<_> = node
         .primal_in_keys()
         .iter()
         .map(|key| match key {
-            GlobalValKey::Input(input_key) => builder.add_input(input_key.clone()),
-            GlobalValKey::Derived { .. } => {
+            ValueKey::Input(input_key) => builder.add_input(input_key.clone()),
+            ValueKey::Derived { .. } => {
                 panic!(
-                    "build_single_op_linear requires GlobalValKey::Input aliases in node.primal_in_keys"
+                    "build_single_op_linear requires ValueKey::Input aliases in node.primal_in_keys"
                 )
             }
         })
         .collect();
 
-    let outputs = builder.add_op(
-        node.op().clone(),
+    let outputs = builder.add_operation(
+        node.operation().clone(),
         input_local_ids
             .iter()
-            .map(|local_id| ValRef::Local(*local_id))
+            .map(|local_id| ValueRef::Local(*local_id))
             .collect(),
-        OpMode::Primal,
+        OperationRole::Primary,
     );
     let selected_outputs: Vec<_> = output_slots
         .iter()
@@ -161,7 +163,7 @@ where
                 panic!(
                     "build_single_op_linear got output slot {slot} for {:?}, \
                      which has only {} outputs",
-                    node.op(),
+                    node.operation(),
                     outputs.len()
                 )
             })
@@ -169,20 +171,20 @@ where
         .collect();
     builder.set_outputs(selected_outputs.clone());
 
-    let fragment = Arc::new(builder.build());
-    let view = resolve(vec![fragment.clone()]);
+    let graph = Arc::new(builder.build());
+    let view = resolve(vec![graph.clone()]);
     let output_keys: Vec<_> = selected_outputs
         .iter()
-        .map(|output_id| fragment.vals()[*output_id].key.clone())
+        .map(|output_id| graph.values()[*output_id].key.clone())
         .collect();
     let wrt_keys: Vec<_> = node
         .primal_in_keys()
         .iter()
         .map(|key| match key {
-            GlobalValKey::Input(input_key) => input_key.clone(),
-            GlobalValKey::Derived { .. } => {
+            ValueKey::Input(input_key) => input_key.clone(),
+            ValueKey::Derived { .. } => {
                 panic!(
-                    "build_single_op_linear requires GlobalValKey::Input aliases in node.primal_in_keys"
+                    "build_single_op_linear requires ValueKey::Input aliases in node.primal_in_keys"
                 )
             }
         })

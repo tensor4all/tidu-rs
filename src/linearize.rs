@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::rules::FragmentPrimitiveBuilder;
+use crate::rules::GraphPrimitiveBuilder;
 use crate::{ADKey, ADRuleResult, DiffPassId, Primitive};
-use computegraph::fragment::FragmentBuilder;
-use computegraph::resolve::{ResolvedView, ValDef};
-use computegraph::{GlobalOpKey, GlobalValKey, GraphOp, LocalValId};
+use computegraph::graph::GraphBuilder;
+use computegraph::resolve::{ResolvedView, ValueDef};
+use computegraph::{GraphOperation, LocalValueId, OperationKey, ValueKey};
 
 use crate::LinearizedGraph;
 
@@ -21,7 +21,7 @@ use crate::LinearizedGraph;
 /// use computegraph::resolve::resolve;
 /// use tidu::try_linearize;
 ///
-/// let view = resolve(vec![primal_fragment]);
+/// let view = resolve(vec![primal_graph]);
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
 /// let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
@@ -30,11 +30,11 @@ use crate::LinearizedGraph;
 /// ```
 pub fn linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
-    outputs: &[GlobalValKey<Op>],
+    outputs: &[ValueKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
-    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
+    aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
 ) -> LinearizedGraph<Op>
 where
     Op::InputKey: ADKey,
@@ -52,25 +52,25 @@ where
 /// normal errors instead of panics.
 pub fn try_linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
-    outputs: &[GlobalValKey<Op>],
+    outputs: &[ValueKey<Op>],
     wrt: &[Op::InputKey],
     pass: DiffPassId,
     ctx: &mut Op::ADContext,
-    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
+    aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
 ) -> ADRuleResult<LinearizedGraph<Op>>
 where
     Op::InputKey: ADKey,
 {
-    let mut builder = FragmentBuilder::<Op>::new();
+    let mut builder = GraphBuilder::<Op>::new();
     let topo_keys = topological_order(view, outputs, aliases);
-    let mut tangent_env: HashMap<GlobalValKey<Op>, Option<LocalValId>> = HashMap::new();
+    let mut tangent_env: HashMap<ValueKey<Op>, Option<LocalValueId>> = HashMap::new();
     let mut processed_ops = HashSet::new();
 
     let mut tangent_inputs = Vec::with_capacity(wrt.len());
     for wrt_key in wrt {
         let tangent_key = wrt_key.tangent_of(pass);
         let tangent_id = builder.add_input(tangent_key);
-        tangent_env.insert(GlobalValKey::Input(wrt_key.clone()), Some(tangent_id));
+        tangent_env.insert(ValueKey::Input(wrt_key.clone()), Some(tangent_id));
         tangent_inputs.push((wrt_key.clone(), tangent_id));
     }
 
@@ -79,12 +79,12 @@ where
             continue;
         }
 
-        let Some(val_def) = view.resolve_val(&key) else {
+        let Some(val_def) = view.resolve_value(&key) else {
             continue;
         };
 
         match val_def {
-            ValDef::Input { key: ref input_key } => {
+            ValueDef::Input { key: ref input_key } => {
                 if let Some(aliased_key) = aliases.get(input_key) {
                     let aliased_tangent = tangent_env.get(aliased_key).copied().flatten();
                     tangent_env.insert(key, aliased_tangent);
@@ -92,22 +92,23 @@ where
                     tangent_env.insert(key, None);
                 }
             }
-            ValDef::Produced {
-                op,
+            ValueDef::Produced {
+                operation,
                 input_keys,
-                mode,
+                role,
                 ..
             } => {
-                let global_op_key = GlobalOpKey::new(op.clone(), input_keys.clone(), mode.clone());
+                let global_op_key =
+                    OperationKey::new(operation.clone(), input_keys.clone(), role.clone());
                 if !processed_ops.insert(global_op_key.clone()) {
                     continue;
                 }
 
-                let tangent_in: Vec<Option<LocalValId>> = input_keys
+                let tangent_in: Vec<Option<LocalValueId>> = input_keys
                     .iter()
                     .map(|input_key| tangent_env.get(input_key).copied().flatten())
                     .collect();
-                let output_keys = output_keys(&global_op_key, op.n_outputs());
+                let output_keys = output_keys(&global_op_key, operation.output_count());
 
                 if tangent_in.iter().all(Option::is_none) {
                     for output_key in output_keys {
@@ -116,8 +117,8 @@ where
                     continue;
                 }
 
-                let mut primitive_builder = FragmentPrimitiveBuilder::new(&mut builder);
-                let tangent_out = op.try_jvp_rule(
+                let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
+                let tangent_out = operation.try_jvp_rule(
                     &mut primitive_builder,
                     &input_keys,
                     &output_keys,
@@ -128,7 +129,7 @@ where
                     tangent_out.len(),
                     output_keys.len(),
                     "jvp_rule for {:?} returned {} tangents for {} outputs",
-                    op,
+                    operation,
                     tangent_out.len(),
                     output_keys.len()
                 );
@@ -140,11 +141,11 @@ where
         }
     }
 
-    let tangent_outputs: Vec<Option<LocalValId>> = outputs
+    let tangent_outputs: Vec<Option<LocalValueId>> = outputs
         .iter()
         .map(|key| tangent_env.get(key).copied().flatten())
         .collect();
-    let active_outputs: Vec<LocalValId> = tangent_outputs.iter().filter_map(|id| *id).collect();
+    let active_outputs: Vec<LocalValueId> = tangent_outputs.iter().filter_map(|id| *id).collect();
     if !active_outputs.is_empty() {
         builder.set_outputs(active_outputs);
     }
@@ -156,39 +157,42 @@ where
     ))
 }
 
-fn output_keys<Op: GraphOp>(op_key: &GlobalOpKey<Op>, n_outputs: usize) -> Vec<GlobalValKey<Op>> {
+fn output_keys<Op: GraphOperation>(
+    op_key: &OperationKey<Op>,
+    output_count: usize,
+) -> Vec<ValueKey<Op>> {
     let op_key = Arc::new(op_key.clone());
-    (0..n_outputs)
-        .map(|output_slot| GlobalValKey::Derived {
-            op: Arc::clone(&op_key),
+    (0..output_count)
+        .map(|output_slot| ValueKey::Derived {
+            operation: Arc::clone(&op_key),
             output_slot: output_slot as u8,
         })
         .collect()
 }
 
-fn topological_order<Op: GraphOp>(
+fn topological_order<Op: GraphOperation>(
     view: &ResolvedView<Op>,
-    outputs: &[GlobalValKey<Op>],
-    aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-) -> Vec<GlobalValKey<Op>> {
-    fn visit<Op: GraphOp>(
-        key: &GlobalValKey<Op>,
+    outputs: &[ValueKey<Op>],
+    aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
+) -> Vec<ValueKey<Op>> {
+    fn visit<Op: GraphOperation>(
+        key: &ValueKey<Op>,
         view: &ResolvedView<Op>,
-        aliases: &HashMap<Op::InputKey, GlobalValKey<Op>>,
-        visited: &mut HashSet<GlobalValKey<Op>>,
-        order: &mut Vec<GlobalValKey<Op>>,
+        aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
+        visited: &mut HashSet<ValueKey<Op>>,
+        order: &mut Vec<ValueKey<Op>>,
     ) {
         if !visited.insert(key.clone()) {
             return;
         }
 
-        match view.resolve_val(key) {
-            Some(ValDef::Produced { input_keys, .. }) => {
+        match view.resolve_value(key) {
+            Some(ValueDef::Produced { input_keys, .. }) => {
                 for input_key in input_keys {
                     visit(&input_key, view, aliases, visited, order);
                 }
             }
-            Some(ValDef::Input { key: input_key }) => {
+            Some(ValueDef::Input { key: input_key }) => {
                 if let Some(aliased_key) = aliases.get(&input_key) {
                     visit(aliased_key, view, aliases, visited, order);
                 }

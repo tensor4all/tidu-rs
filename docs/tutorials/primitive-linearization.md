@@ -32,19 +32,19 @@ enum ScalarOp {
     Exp,
 }
 
-impl GraphOp for ScalarOp {
+impl GraphOperation for ScalarOp {
     type Operand = f64;
     type Context = ();
     type InputKey = ScalarKey;
 
-    fn n_inputs(&self) -> usize {
+    fn input_count(&self) -> usize {
         match self {
             Self::Add | Self::Mul => 2,
             Self::Neg | Self::Exp => 1,
         }
     }
 
-    fn n_outputs(&self) -> usize {
+    fn output_count(&self) -> usize {
         1
     }
 }
@@ -69,7 +69,7 @@ impl ADKey for ScalarKey {
 `Primitive` is where the downstream crate teaches `tidu` the local derivative
 rules. The rule methods receive primal values, tangent or cotangent slots, and
 a `PrimitiveBuilder` for appending primitive applications to the transformed
-graph. `LocalValId` is the graph-local identifier returned by that builder for
+graph. `LocalValueId` is the graph-local identifier returned by that builder for
 a newly produced value.
 
 For addition, the JVP is just the sum of active tangent inputs. For
@@ -85,7 +85,7 @@ if let Some(dx) = tangent_inputs[0] {
             PrimitiveValue::Local(dx),
             PrimitiveValue::External(primal_inputs[1].clone()),
         ],
-        OpMode::Linear {
+        OperationRole::Linearized {
             active_mask: vec![true, false],
         },
     );
@@ -98,7 +98,7 @@ if let Some(dy) = tangent_inputs[1] {
             PrimitiveValue::External(primal_inputs[0].clone()),
             PrimitiveValue::Local(dy),
         ],
-        OpMode::Linear {
+        OperationRole::Linearized {
             active_mask: vec![false, true],
         },
     );
@@ -114,12 +114,12 @@ input:
 fn transpose_mul(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
     inputs: &[PrimitiveValue<ScalarOp>],
-    ct: LocalValId,
-    mode: &OpMode,
-) -> Vec<Option<LocalValId>> {
-    let active_mask = match mode {
-        OpMode::Linear { active_mask } => active_mask,
-        OpMode::Primal => return vec![None, None],
+    ct: LocalValueId,
+    role: &OperationRole,
+) -> Vec<Option<LocalValueId>> {
+    let active_mask = match role {
+        OperationRole::Linearized { active_mask } => active_mask,
+        OperationRole::Primary => return vec![None, None],
     };
 
     let mut result = vec![None, None];
@@ -127,7 +127,7 @@ fn transpose_mul(
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );
@@ -137,7 +137,7 @@ fn transpose_mul(
         let out = builder.add_primitive(
             ScalarOp::Mul,
             vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
-            OpMode::Linear {
+            OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
         );

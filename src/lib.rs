@@ -1,13 +1,28 @@
-//! AD graph transforms for the tensor4all v2 stack.
+//! Automatic-differentiation transforms for primitive computation graphs.
 //!
-//! This crate provides two graph-to-graph transforms:
-//! [`linearize`] for forward linearization (JVP) and [`linear_transpose`] for
-//! reverse linear flow over a linearized graph.
+//! `tidu` is for downstream crates that define primitive operations, local AD
+//! rules, graph runtimes, or eager tensor frontends. It does not define tensor
+//! operations itself. Instead, downstream primitive sets implement [`Primitive`],
+//! then call the graph transforms here to build new primitive computation
+//! graphs.
+//!
+//! The main transforms are:
+//!
+//! - [`linearize`] / [`try_linearize`], which build a graph for a
+//!   Jacobian-vector product (JVP) of selected outputs with respect to selected
+//!   inputs.
+//! - [`linear_transpose`] / [`try_linear_transpose`], which transpose a
+//!   linearized graph so cotangents can flow backward through the corresponding
+//!   linear map.
+//! - [`eager::try_backward`], which supports downstream eager frontends that
+//!   record primitive executions and want a reverse-mode `backward()` workflow.
+//!
 //! Fallible variants (`try_linearize`, `try_linear_transpose`, and
 //! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or
 //! extension AD rules.
-//! It also provides a small [`eager`] module for downstream frontends that want
-//! to record PyTorch-style eager reverse-mode traces over `Primitive` values.
+//!
+//! See the repository `docs/` tree for the terminology guide, tutorials, and
+//! implementer guides.
 //!
 //! # Examples
 //!
@@ -15,7 +30,7 @@
 //! use computegraph::resolve::resolve;
 //! use tidu::{try_linear_transpose, try_linearize};
 //!
-//! let view = resolve(vec![primal_fragment]);
+//! let view = resolve(vec![source_graph]);
 //! let mut ctx = ();
 //! let aliases = std::collections::HashMap::new();
 //! let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;

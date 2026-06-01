@@ -13,6 +13,11 @@ the public API.
 The primary audience is downstream implementers: crates that define primitive
 operations, AD rules, graph runtimes, or eager tensor frontends.
 
+In this design note, `Fragment` means the lower-level `computegraph` graph
+container, and emitter or `OpEmitter` means a lower-level builder used to append
+operations to that container. These are implementation terms, not the public
+learning vocabulary.
+
 The public vocabulary should align with JAX where the concepts match:
 primitive, JVP rule, linearization, transpose rule, and transposed linear maps.
 Implementation words such as fragment and emitter should not appear in the
@@ -51,11 +56,11 @@ The documentation should define these terms without assuming JAX knowledge:
 - **Transpose rule**: a local primitive rule that emits input cotangents from
   output cotangents.
 
-The first-read docs should avoid storage-level words from `computegraph`.
-Architecture or internals pages may name lower-level computegraph types such as
-`Fragment`, `OpEmitter`, `LocalValId`, and `ValRef` when documenting escape
-hatches or storage integration, but those terms should not be presented as the
-main `tidu` API vocabulary.
+The first-read docs should avoid lower-level representation words from
+`computegraph`. Architecture or internals pages may name lower-level
+computegraph types such as `Fragment`, `OpEmitter`, `LocalValId`, and `ValRef`
+when documenting advanced integration points, but those terms should not be
+presented as the main `tidu` API vocabulary.
 
 ## Public API Direction
 
@@ -241,4 +246,4 @@ additive compatibility aliases.
   computegraph interoperability.
 - Use wrapper graph types in eager executor signatures instead of narrower
   single-operation callbacks. This keeps eager backward aligned with the graph
-  transform API and avoids leaking storage-level `Fragment` names.
+  transform API and avoids leaking lower-level `Fragment` names.

@@ -46,6 +46,9 @@ jobs:
       - name: Run doctests
         run: cargo test --doc --workspace --release
 
+      - name: Run example tests
+        run: cargo test --examples --workspace --release
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest
@@ -75,3 +78,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pandoc graphviz
       - name: Build docs site
         run: bash scripts/build_docs_site.sh
+      - name: Check custom docs-site output is clean
+        run: |
+          bash scripts/build_docs_site.sh target/docs-site
+          test -f target/docs-site/design/index.html
+          mkdir -p target/docs-site/design
+          printf 'stale\n' > target/docs-site/design/stale.html
+          rm -rf /tmp/tidu-docs-site-stale
+          bash scripts/build_docs_site.sh /tmp/tidu-docs-site-stale
+          test -f /tmp/tidu-docs-site-stale/design/index.html
+          test ! -e /tmp/tidu-docs-site-stale/design/stale.html

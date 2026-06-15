@@ -1,7 +1,7 @@
 # Eager Reverse Mode
 
-This tutorial shows how a downstream eager frontend can record immediate
-primitive execution and call `tidu::eager::try_backward`.
+This tutorial shows how a downstream eager frontend can record immediate graph
+invocations and call `tidu::eager::try_backward`.
 
 The complete runnable source is `examples/eager_reverse_mode.rs`. The example
 also includes an `example_runs` test, so `cargo test --examples` exercises the
@@ -62,11 +62,11 @@ impl EvaluableGraphOperation for ScalarOp {
 ## AD Rules
 
 The eager path still relies on the same `Primitive` JVP and transpose rules as
-graph linearization. During backward, `tidu` builds small linearized graphs and
-asks the downstream executor to run their transposes. The multiply JVP emits
-`dx * y + x * dy`, and the multiply transpose rule maps an output cotangent
-back to each active input. `LocalValueId` is the graph-local identifier returned
-by the builder for values created while constructing transformed primitive
+graph linearization. During backward, `tidu` linearizes the recorded graph and
+asks the downstream executor to run its transpose. The multiply JVP emits
+`dx * y + x * dy`, and the multiply transpose rule maps an output cotangent back
+to each active input. `LocalValueId` is the graph-local identifier returned by
+the builder for values created while constructing transformed primitive
 computation graphs.
 
 ```rust
@@ -171,8 +171,9 @@ try_linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx)
 
 ## Driver
 
-The driver records the eager multiply `x * x`, then asks `tidu` to propagate an
-output cotangent of `1` back to `x`:
+The driver records the eager multiply `x * x` as a one-operation
+`RecordedGraph`, then asks `tidu` to propagate an output cotangent of `1` back
+to `x`:
 
 ```rust
 let mut recorder = Recorder::new(ExampleKeySource::default());
@@ -186,7 +187,7 @@ let inputs = vec![
     },
     x,
 ];
-let outputs = recorder.record(ScalarOp::Mul, &inputs, &[arc(9.0)]);
+let outputs = record_primitive(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
 
 let mut executor = ScalarBackwardExecutor;
 let cotangents = eager::try_backward(

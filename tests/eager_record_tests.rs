@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
-use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, Recorder};
+use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, RecordedGraph, Recorder};
 use tidu::{
     try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
     PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
@@ -267,6 +267,23 @@ fn eager_value(name: &str, value: f64, requires_grad: bool) -> EagerInput<Record
     }
 }
 
+fn record_op(
+    recorder: &mut Recorder<TestKeySource>,
+    op: RecorderOp,
+    inputs: &[EagerInput<RecorderOp>],
+    outputs: &[Arc<f64>],
+) -> Vec<tidu::eager::EagerOutput<RecorderOp>> {
+    let graph_input_keys = recorder.fresh_input_keys::<RecorderOp>(inputs.len());
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let retained = graph
+        .output_keys()
+        .iter()
+        .cloned()
+        .zip(outputs.iter().cloned())
+        .collect();
+    recorder.record_graph(graph, inputs, outputs, retained)
+}
+
 struct EagerBuilder {
     locals: Vec<Arc<f64>>,
     external_data: HashMap<ValueKey<RecorderOp>, Arc<f64>>,
@@ -399,7 +416,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
 fn record_eager_binary_op_and_skips_inactive_input_cotangents() {
     let inputs = vec![eager_value("x", 3.0, true), eager_value("y", 4.0, false)];
     let mut recorder = Recorder::new(TestKeySource::default());
-    let outputs = recorder.record(RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
+    let outputs = record_op(&mut recorder, RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
     let mut callbacks = Callbacks::default();
     let cotangents = eager::try_backward(
         &outputs[0].key,
@@ -425,7 +442,7 @@ fn record_eager_nary_op_builds_all_input_edges() {
         eager_value("c", 3.0, true),
     ];
     let mut recorder = Recorder::new(TestKeySource::default());
-    let outputs = recorder.record(RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
+    let outputs = record_op(&mut recorder, RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
     let mut callbacks = Callbacks::default();
     let cotangents = eager::try_backward(
         &outputs[0].key,
@@ -448,7 +465,12 @@ fn record_eager_nary_op_builds_all_input_edges() {
 fn record_eager_multi_output_op_uses_one_node_and_seeds_nonzero_slot() {
     let inputs = vec![eager_value("x", 3.0, true)];
     let mut recorder = Recorder::new(TestKeySource::default());
-    let outputs = recorder.record(RecorderOp::Split, &inputs, &[Arc::new(3.0), Arc::new(-3.0)]);
+    let outputs = record_op(
+        &mut recorder,
+        RecorderOp::Split,
+        &inputs,
+        &[Arc::new(3.0), Arc::new(-3.0)],
+    );
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs[0].trace.is_some());

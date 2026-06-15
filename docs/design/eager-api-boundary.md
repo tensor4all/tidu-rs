@@ -14,11 +14,11 @@ runtimes, and user-facing eager tensor types.
 
 `tidu::eager` owns:
 
-- recording an eager operation into an opaque trace handle,
-- allocating stable input aliases and output keys,
+- recording an eager graph invocation into an opaque trace handle,
+- allocating stable graph input keys and eager output keys,
 - sharing one trace node across multi-output operations,
 - sorting and walking the reverse trace during backward,
-- building one-op linearized graphs during backward, and
+- linearizing recorded graphs during backward, and
 - calling downstream executors to replay primal and `linear_transpose` work.
 
 The root crate owns small helpers that execute AD-generated linearized graphs
@@ -29,15 +29,14 @@ through a caller-provided `PrimitiveBuilder`.
 The following remain implementation details:
 
 - trace nodes and trace edges,
-- saved-forward key derivation,
+- recorded graph key alignment,
 - saved-forward map construction,
-- reverse trace topological sorting, and
-- single-op linearized graph construction.
+- reverse trace topological sorting.
 
 Downstream frontends should not construct trace nodes, trace edges, or saved
-forward maps by hand. They should pass eager inputs and concrete outputs to a
-`Recorder`, store the returned output keys and trace handles, then call
-`try_backward` from their public tensor API.
+forward maps by hand. They should build a `RecordedGraph`, pass eager inputs and
+concrete outputs to a `Recorder`, store the returned output keys and trace
+handles, then call `try_backward` from their public tensor API.
 
 ## Downstream Responsibilities
 
@@ -60,7 +59,8 @@ items live under `tidu::eager`:
 
 ```rust
 tidu::eager::{
-    BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder, Trace, try_backward,
+    BackwardExecutor, EagerInput, EagerOutput, KeySource, RecordedGraph, Recorder, Trace,
+    try_backward,
 }
 ```
 

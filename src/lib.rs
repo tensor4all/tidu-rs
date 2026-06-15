@@ -15,7 +15,7 @@
 //!   linearized graph so cotangents can flow backward through the corresponding
 //!   linear map.
 //! - [`eager::try_backward`], which supports downstream eager frontends that
-//!   record primitive executions and want a reverse-mode `backward()` workflow.
+//!   record graph invocations and want a reverse-mode `backward()` workflow.
 //!
 //! Fallible variants (`try_linearize`, `try_linear_transpose`, and
 //! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or

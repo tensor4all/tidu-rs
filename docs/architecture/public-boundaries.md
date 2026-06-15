@@ -9,7 +9,7 @@
   rules.
 - `LinearizedGraph` is the public transform result.
 - `PrimitiveGraph` is a borrowed graph view passed to eager replay hooks.
-- `tidu::eager` records and walks eager primitive traces.
+- `tidu::eager` records and walks eager graph-invocation traces.
 
 ## Downstream Responsibilities
 

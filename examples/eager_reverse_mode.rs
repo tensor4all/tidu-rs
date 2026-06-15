@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
-use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, Recorder};
+use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, RecordedGraph, Recorder};
 use tidu::{
     try_linear_transpose_with_builder, ADKey, ADRuleResult, DiffPassId, LinearizedGraph, Primitive,
     PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
@@ -342,6 +342,23 @@ fn eager_input(name: &str, value: f64, requires_grad: bool) -> EagerInput<Scalar
     }
 }
 
+fn record_primitive(
+    recorder: &mut Recorder<ExampleKeySource>,
+    op: ScalarOp,
+    inputs: &[EagerInput<ScalarOp>],
+    outputs: &[Arc<f64>],
+) -> Vec<tidu::eager::EagerOutput<ScalarOp>> {
+    let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(inputs.len());
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let retained_values = graph
+        .output_keys()
+        .iter()
+        .cloned()
+        .zip(outputs.iter().cloned())
+        .collect();
+    recorder.record_graph(graph, inputs, outputs, retained_values)
+}
+
 fn sum_tangent_terms(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
     terms: impl IntoIterator<Item = LocalValueId>,
@@ -420,7 +437,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         x,
     ];
-    let outputs = recorder.record(ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let outputs = record_primitive(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
 
     let mut executor = ScalarBackwardExecutor;
     let cotangents = eager::try_backward(

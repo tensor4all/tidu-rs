@@ -2,9 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::{ADKey, ADRuleResult, Primitive};
-use computegraph::graph::GraphBuilder;
-use computegraph::resolve::resolve;
-use computegraph::{GraphOperation, OperationRole, ValueKey, ValueRef};
+use computegraph::{GraphOperation, ValueKey};
 
 use crate::{LinearizedGraph, PrimitiveGraph};
 
@@ -70,7 +68,9 @@ where
             }
         }
 
-        let linear = try_build_single_op_linear(node, &active_output_slots, ctx)?;
+        let linear = node
+            .computation()
+            .try_linearize(&active_output_slots, ctx)?;
         let replay_graph = PrimitiveGraph::new(linear.as_graph());
         let all_values = executor.execute_forward(replay_graph, node.saved_data());
         let cotangent_in =
@@ -123,73 +123,4 @@ fn topo_sort_trace<Op: GraphOperation>(
         visit(trace.node(), &mut visited, &mut order);
     }
     order
-}
-
-fn try_build_single_op_linear<Op: Primitive>(
-    node: &TraceNode<Op>,
-    output_slots: &[usize],
-    ctx: &mut Op::ADContext,
-) -> ADRuleResult<LinearizedGraph<Op>>
-where
-    Op::InputKey: ADKey,
-{
-    let mut builder = GraphBuilder::new();
-
-    let input_local_ids: Vec<_> = node
-        .primal_in_keys()
-        .iter()
-        .map(|key| match key {
-            ValueKey::Input(input_key) => builder.add_input(input_key.clone()),
-            ValueKey::Derived { .. } => {
-                panic!(
-                    "build_single_op_linear requires ValueKey::Input aliases in node.primal_in_keys"
-                )
-            }
-        })
-        .collect();
-
-    let outputs = builder.add_operation(
-        node.operation().clone(),
-        input_local_ids
-            .iter()
-            .map(|local_id| ValueRef::Local(*local_id))
-            .collect(),
-        OperationRole::Primary,
-    );
-    let selected_outputs: Vec<_> = output_slots
-        .iter()
-        .map(|&slot| {
-            *outputs.get(slot).unwrap_or_else(|| {
-                panic!(
-                    "build_single_op_linear got output slot {slot} for {:?}, \
-                     which has only {} outputs",
-                    node.operation(),
-                    outputs.len()
-                )
-            })
-        })
-        .collect();
-    builder.set_outputs(selected_outputs.clone());
-
-    let graph = Arc::new(builder.build());
-    let view = resolve(vec![graph.clone()]);
-    let output_keys: Vec<_> = selected_outputs
-        .iter()
-        .map(|output_id| graph.values()[*output_id].key.clone())
-        .collect();
-    let wrt_keys: Vec<_> = node
-        .primal_in_keys()
-        .iter()
-        .map(|key| match key {
-            ValueKey::Input(input_key) => input_key.clone(),
-            ValueKey::Derived { .. } => {
-                panic!(
-                    "build_single_op_linear requires ValueKey::Input aliases in node.primal_in_keys"
-                )
-            }
-        })
-        .collect();
-    let aliases = HashMap::new();
-
-    crate::try_linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 }

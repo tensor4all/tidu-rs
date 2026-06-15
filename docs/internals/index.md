@@ -11,8 +11,9 @@ Key implementation areas:
   tangent graph structure.
 - `linear_transpose` walks linear graph structure in reverse and asks primitive
   transpose rules to emit cotangent graph structure.
-- `tidu::eager` stores operation traces, builds single-operation linearizations,
-  and delegates concrete execution to `BackwardExecutor`.
+- `tidu::eager` stores recorded graph invocation traces, linearizes those
+  graphs during backward, and delegates concrete execution to
+  `BackwardExecutor`.
 
 The public tutorials intentionally avoid these implementation details until they
 are needed.

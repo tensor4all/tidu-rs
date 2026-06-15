@@ -5,7 +5,9 @@ use computegraph::graph::GraphBuilder;
 use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
-use tidu::eager::{self, BackwardExecutor, EagerInput, EagerOutput, KeySource, Recorder};
+use tidu::eager::{
+    self, BackwardExecutor, EagerInput, EagerOutput, KeySource, RecordedGraph, Recorder,
+};
 use tidu::{
     linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
     PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
@@ -414,6 +416,55 @@ fn scalar_input_from_output(
     }
 }
 
+fn scalar_recorded_graph(
+    graph: computegraph::graph::Graph<ScalarOp>,
+    input_keys: Vec<ScalarKey>,
+) -> RecordedGraph<ScalarOp> {
+    let graph = Arc::new(graph);
+    let output_keys = graph
+        .outputs()
+        .iter()
+        .map(|output_id| graph.values()[*output_id].key.clone())
+        .collect();
+    RecordedGraph::new(graph, input_keys, output_keys)
+}
+
+fn record_scalar_op(
+    recorder: &mut Recorder<TestKeySource>,
+    op: ScalarOp,
+    inputs: &[EagerInput<ScalarOp>],
+    outputs: &[Arc<f64>],
+) -> Vec<EagerOutput<ScalarOp>> {
+    let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(inputs.len());
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let retained = retained_outputs(&graph, outputs);
+    recorder.record_graph(graph, inputs, outputs, retained)
+}
+
+fn record_two_output_op(
+    recorder: &mut Recorder<TestKeySource>,
+    op: TwoOutputOp,
+    inputs: &[EagerInput<TwoOutputOp>],
+    outputs: &[Arc<f64>],
+) -> Vec<EagerOutput<TwoOutputOp>> {
+    let graph_input_keys = recorder.fresh_input_keys::<TwoOutputOp>(inputs.len());
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let retained = retained_outputs(&graph, outputs);
+    recorder.record_graph(graph, inputs, outputs, retained)
+}
+
+fn retained_outputs<Op: computegraph::GraphOperation>(
+    graph: &RecordedGraph<Op>,
+    outputs: &[Arc<Op::Operand>],
+) -> HashMap<ValueKey<Op>, Arc<Op::Operand>> {
+    graph
+        .output_keys()
+        .iter()
+        .cloned()
+        .zip(outputs.iter().cloned())
+        .collect()
+}
+
 struct PartialOutputCallbacks {
     observed_graph_outputs: usize,
     observed_seed_slots: usize,
@@ -637,9 +688,9 @@ fn try_linear_transpose_with_builder_propagates_add_cotangents() {
 fn try_backward_orders_dependencies_before_output() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let inputs = vec![scalar_input("a", 2.0, true), scalar_input("b", 5.0, true)];
-    let add_outputs = recorder.record(ScalarOp::Add, &inputs, &[arc(7.0)]);
+    let add_outputs = record_scalar_op(&mut recorder, ScalarOp::Add, &inputs, &[arc(7.0)]);
     let neg_inputs = vec![scalar_input_from_output(&add_outputs[0], 7.0, true)];
-    let neg_outputs = recorder.record(ScalarOp::Neg, &neg_inputs, &[arc(-7.0)]);
+    let neg_outputs = record_scalar_op(&mut recorder, ScalarOp::Neg, &neg_inputs, &[arc(-7.0)]);
 
     let mut callbacks = ScalarBackwardCallbacks;
     let cotangents = eager::try_backward(
@@ -673,7 +724,7 @@ fn try_backward_accumulates_x_squared_gradient() {
         },
     ];
     let mut recorder = Recorder::new(TestKeySource::default());
-    let outputs = recorder.record(ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
     let mut callbacks = ScalarBackwardCallbacks;
     let cotangents = eager::try_backward(
         &outputs[0].key,
@@ -688,6 +739,42 @@ fn try_backward_accumulates_x_squared_gradient() {
 }
 
 #[test]
+fn try_backward_records_multi_op_graph_as_one_node() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(2);
+    let mut builder = GraphBuilder::<ScalarOp>::new();
+    let x = builder.add_input(graph_input_keys[0].clone());
+    let y = builder.add_input(graph_input_keys[1].clone());
+    let product = builder.add_operation(
+        ScalarOp::Mul,
+        vec![ValueRef::Local(x), ValueRef::Local(y)],
+        OperationRole::Primary,
+    );
+    let sum = builder.add_operation(
+        ScalarOp::Add,
+        vec![ValueRef::Local(product[0]), ValueRef::Local(y)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(vec![sum[0]]);
+    let recorded_graph = scalar_recorded_graph(builder.build(), graph_input_keys);
+    let inputs = vec![scalar_input("x", 2.0, true), scalar_input("y", 3.0, true)];
+    let outputs = recorder.record_graph(recorded_graph, &inputs, &[arc(9.0)], HashMap::new());
+
+    let mut callbacks = ScalarBackwardCallbacks;
+    let cotangents = eager::try_backward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
+
+    assert_eq!(**cotangents.get(&ValueKey::Input(sk("x"))).unwrap(), 3.0);
+    assert_eq!(**cotangents.get(&ValueKey::Input(sk("y"))).unwrap(), 3.0);
+}
+
+#[test]
 fn try_backward_linearizes_only_seeded_multi_output_slots() {
     let grad_key = ValueKey::Input(sk("grad_x"));
     let inputs = vec![EagerInput {
@@ -697,7 +784,12 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
         data: arc(3.0),
     }];
     let mut recorder = Recorder::new(TestKeySource::default());
-    let outputs = recorder.record(TwoOutputOp::Split, &inputs, &[arc(3.0), arc(6.0)]);
+    let outputs = record_two_output_op(
+        &mut recorder,
+        TwoOutputOp::Split,
+        &inputs,
+        &[arc(3.0), arc(6.0)],
+    );
     let mut callbacks = PartialOutputCallbacks {
         observed_graph_outputs: 0,
         observed_seed_slots: 0,

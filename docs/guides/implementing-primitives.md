@@ -15,10 +15,10 @@ A primitive operation must first implement `computegraph::GraphOperation`:
 `tidu::Primitive` adds AD-specific requirements:
 
 - `add()` returns the primitive used to accumulate cotangents.
-- `jvp_rule()` emits tangent outputs for linearization.
-- `transpose_rule()` emits input cotangents for transposed linear maps.
-- `try_jvp_rule()` and `try_linear_transpose_rule()` can report missing rules
-  with `ADRuleError`.
+- `jvp_rule()` emits tangent outputs for linearization and reports rule
+  failures with `ADRuleError`.
+- `transpose_rule()` emits input cotangents for transposed linear maps and
+  reports rule failures with `ADRuleError`.
 
 ## Rule Closure
 

@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use computegraph::{GraphOperation, ValueKey};
 
-use super::record::RecordedGraph;
+use super::record::{EagerRecordError, EagerRecordResult, RecordedGraph};
 
 /// Opaque handle to an eager reverse-mode trace node.
 ///
 /// Downstream eager values store this handle next to their concrete data and
-/// pass it back to [`crate::eager::try_backward`]. The node and edge layout is
+/// pass it back to [`crate::eager::backward`]. The node and edge layout is
 /// intentionally private.
 pub struct Trace<Op: GraphOperation> {
     node: Arc<TraceNode<Op>>,
@@ -50,28 +50,28 @@ impl<Op: GraphOperation> TraceNode<Op> {
         primal_out_keys: Vec<ValueKey<Op>>,
         saved_data: HashMap<ValueKey<Op>, Arc<Op::Operand>>,
         input_edges: Vec<TraceEdge<Op>>,
-    ) -> Self {
-        assert_eq!(
-            primal_out_keys.len(),
-            computation.output_keys().len(),
-            "trace node expected {} primal output keys, got {}",
-            computation.output_keys().len(),
-            primal_out_keys.len()
-        );
-        assert_eq!(
-            input_edges.len(),
-            computation.input_keys().len(),
-            "trace node expected {} input edges, got {}",
-            computation.input_keys().len(),
-            input_edges.len()
-        );
+    ) -> EagerRecordResult<Self> {
+        if primal_out_keys.len() != computation.output_keys().len() {
+            return Err(EagerRecordError::count_mismatch(
+                "TraceNode primal output keys",
+                computation.output_keys().len(),
+                primal_out_keys.len(),
+            ));
+        }
+        if input_edges.len() != computation.input_keys().len() {
+            return Err(EagerRecordError::count_mismatch(
+                "TraceNode input edges",
+                computation.input_keys().len(),
+                input_edges.len(),
+            ));
+        }
 
-        Self {
+        Ok(Self {
             computation,
             primal_out_keys,
             saved_data,
             input_edges,
-        }
+        })
     }
 
     pub(crate) fn computation(&self) -> &RecordedGraph<Op> {

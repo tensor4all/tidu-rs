@@ -6,7 +6,7 @@ use tidu::PrimitiveValue;
 #[macro_export]
 macro_rules! transpose_add {
     ($ct:expr) => {
-        vec![Some($ct), Some($ct)]
+        Ok(vec![Some($ct), Some($ct)])
     };
 }
 
@@ -15,7 +15,7 @@ macro_rules! transpose_mul_real {
     ($builder:expr, $OpMul:path, $inputs:expr, $ct:expr, $role:expr) => {{
         let active_mask = match $role {
             OperationRole::Linearized { active_mask } => active_mask,
-            OperationRole::Primary => return vec![None, None],
+            OperationRole::Primary => return Ok(vec![None, None]),
         };
         let mut result = vec![None, None];
         if active_mask[0] {
@@ -38,7 +38,7 @@ macro_rules! transpose_mul_real {
             );
             result[1] = Some(out[0]);
         }
-        result
+        Ok(result)
     }};
 }
 
@@ -47,7 +47,7 @@ macro_rules! transpose_mul_complex {
     ($builder:expr, $OpMul:path, $OpConj:path, $inputs:expr, $ct:expr, $role:expr) => {{
         let active_mask = match $role {
             OperationRole::Linearized { active_mask } => active_mask,
-            OperationRole::Primary => return vec![None, None],
+            OperationRole::Primary => return Ok(vec![None, None]),
         };
         let mut result = vec![None, None];
         if active_mask[0] {
@@ -90,7 +90,7 @@ macro_rules! transpose_mul_complex {
             );
             result[1] = Some(out[0]);
         }
-        result
+        Ok(result)
     }};
 }
 
@@ -104,7 +104,7 @@ macro_rules! transpose_neg {
                 active_mask: vec![true],
             },
         );
-        vec![Some(out[0])]
+        Ok(vec![Some(out[0])])
     }};
 }
 
@@ -118,6 +118,6 @@ macro_rules! transpose_conj {
                 active_mask: vec![true],
             },
         );
-        vec![Some(out[0])]
+        Ok(vec![Some(out[0])])
     }};
 }

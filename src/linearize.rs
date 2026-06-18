@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::rules::GraphPrimitiveBuilder;
-use crate::{ADKey, ADRuleResult, DiffPassId, Primitive};
+use crate::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
 use computegraph::graph::GraphBuilder;
 use computegraph::resolve::{ResolvedView, ValueDef};
 use computegraph::{GraphOperation, LocalValueId, OperationKey, ValueKey};
@@ -13,44 +13,22 @@ use crate::LinearizedGraph;
 ///
 /// The transform walks the reachable DAG from `outputs` in dependency-first
 /// order and delegates primitive-specific JVP generation to
-/// [`crate::Primitive::try_jvp_rule`].
+/// [`crate::Primitive::jvp_rule`].
 ///
 /// # Examples
 ///
 /// ```ignore
 /// use computegraph::resolve::resolve;
-/// use tidu::try_linearize;
+/// use tidu::linearize;
 ///
 /// let view = resolve(vec![primal_graph]);
 /// let mut ctx = ();
 /// let aliases = std::collections::HashMap::new();
-/// let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+/// let linear = linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
 /// assert_eq!(linear.tangent_outputs().len(), 1);
 /// # Ok::<(), crate::ADRuleError>(())
 /// ```
 pub fn linearize<Op: Primitive>(
-    view: &ResolvedView<Op>,
-    outputs: &[ValueKey<Op>],
-    wrt: &[Op::InputKey],
-    pass: DiffPassId,
-    ctx: &mut Op::ADContext,
-    aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
-) -> LinearizedGraph<Op>
-where
-    Op::InputKey: ADKey,
-{
-    match try_linearize(view, outputs, wrt, pass, ctx, aliases) {
-        Ok(linear) => linear,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Fallible form of [`linearize`].
-///
-/// This returns [`crate::ADRuleError`] when a primitive cannot emit a JVP
-/// rule, allowing downstream frontends to surface missing extension rules as
-/// normal errors instead of panics.
-pub fn try_linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[ValueKey<Op>],
     wrt: &[Op::InputKey],
@@ -118,21 +96,24 @@ where
                 }
 
                 let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
-                let tangent_out = operation.try_jvp_rule(
+                let tangent_out = operation.jvp_rule(
                     &mut primitive_builder,
                     &input_keys,
                     &output_keys,
                     &tangent_in,
                     ctx,
                 )?;
-                assert_eq!(
-                    tangent_out.len(),
-                    output_keys.len(),
-                    "jvp_rule for {:?} returned {} tangents for {} outputs",
-                    operation,
-                    tangent_out.len(),
-                    output_keys.len()
-                );
+                if tangent_out.len() != output_keys.len() {
+                    return Err(ADRuleError::invalid_input(
+                        format!("{operation:?}"),
+                        ADRuleKind::Jvp,
+                        format!(
+                            "rule returned {} tangents for {} outputs",
+                            tangent_out.len(),
+                            output_keys.len()
+                        ),
+                    ));
+                }
 
                 for (output_key, tangent_output) in output_keys.into_iter().zip(tangent_out) {
                     tangent_env.insert(output_key, tangent_output);

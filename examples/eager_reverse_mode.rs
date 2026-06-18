@@ -5,7 +5,7 @@ use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, RecordedGraph, Recorder};
 use tidu::{
-    try_linear_transpose_with_builder, ADKey, ADRuleResult, DiffPassId, LinearizedGraph, Primitive,
+    linear_transpose_with_builder, ADKey, ADRuleResult, DiffPassId, LinearizedGraph, Primitive,
     PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
 };
 
@@ -78,9 +78,12 @@ impl Primitive for ScalarOp {
         primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Add => sum_tangent_terms(builder, tangent_inputs.iter().filter_map(|id| *id)),
+            Self::Add => Ok(sum_tangent_terms(
+                builder,
+                tangent_inputs.iter().filter_map(|id| *id),
+            )),
             Self::Mul => {
                 let mut terms = Vec::new();
                 if let Some(dx) = tangent_inputs[0] {
@@ -109,9 +112,9 @@ impl Primitive for ScalarOp {
                     );
                     terms.push(term[0]);
                 }
-                sum_tangent_terms(builder, terms)
+                Ok(sum_tangent_terms(builder, terms))
             }
-            Self::Neg => tangent_inputs[0].map_or_else(
+            Self::Neg => Ok(tangent_inputs[0].map_or_else(
                 || vec![None],
                 |dx| {
                     let out = builder.add_primitive(
@@ -123,7 +126,7 @@ impl Primitive for ScalarOp {
                     );
                     vec![Some(out[0])]
                 },
-            ),
+            )),
             Self::Exp => {
                 if let Some(dx) = tangent_inputs[0] {
                     let out = builder.add_primitive(
@@ -136,9 +139,9 @@ impl Primitive for ScalarOp {
                             active_mask: vec![false, true],
                         },
                     );
-                    vec![Some(out[0])]
+                    Ok(vec![Some(out[0])])
                 } else {
-                    vec![None]
+                    Ok(vec![None])
                 }
             }
         }
@@ -151,14 +154,14 @@ impl Primitive for ScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let Some(ct) = cotangent_outputs[0] else {
-            return vec![None; self.input_count()];
+            return Ok(vec![None; self.input_count()]);
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => transpose_mul(builder, inputs, ct, role),
+            Self::Add => Ok(vec![Some(ct), Some(ct)]),
+            Self::Mul => Ok(transpose_mul(builder, inputs, ct, role)),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
@@ -167,7 +170,7 @@ impl Primitive for ScalarOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
             Self::Exp => panic!("Exp should be linearized before linear_transpose"),
         }
@@ -309,7 +312,7 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardExecutor {
             .map(|seed| seed.as_ref().map(|value| builder.push_value(value.clone())))
             .collect();
 
-        try_linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx).map(|ids| {
+        linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx).map(|ids| {
             ids.into_iter()
                 .map(|id| id.map(|local_id| builder.value(local_id)))
                 .collect()
@@ -347,9 +350,9 @@ fn record_primitive(
     op: ScalarOp,
     inputs: &[EagerInput<ScalarOp>],
     outputs: &[Arc<f64>],
-) -> Vec<tidu::eager::EagerOutput<ScalarOp>> {
+) -> Result<Vec<tidu::eager::EagerOutput<ScalarOp>>, tidu::eager::EagerRecordError> {
     let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(inputs.len());
-    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys)?;
     let retained_values = graph
         .output_keys()
         .iter()
@@ -437,10 +440,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         x,
     ];
-    let outputs = record_primitive(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let outputs = record_primitive(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)])?;
 
     let mut executor = ScalarBackwardExecutor;
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[0].key,
         outputs[0].trace.as_ref(),
         arc(1.0),

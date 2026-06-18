@@ -57,6 +57,16 @@ pub enum ADRuleError {
         /// Missing rule kind.
         rule: ADRuleKind,
     },
+    /// The requested primitive has an AD rule, but the supplied primal inputs
+    /// violate that rule's documented shape, dtype, or activity contract.
+    InvalidInput {
+        /// Stable primitive name or extension family identifier.
+        op: String,
+        /// Rule kind that rejected the input.
+        rule: ADRuleKind,
+        /// Human-readable validation failure.
+        message: String,
+    },
 }
 
 impl ADRuleError {
@@ -77,6 +87,32 @@ impl ADRuleError {
         }
     }
 
+    /// Constructs an invalid-input rule error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tidu::{ADRuleError, ADRuleKind};
+    ///
+    /// let err = ADRuleError::invalid_input(
+    ///     "custom::solve",
+    ///     ADRuleKind::Transpose,
+    ///     "expected rank >= 2",
+    /// );
+    /// assert_eq!(err.rule(), ADRuleKind::Transpose);
+    /// ```
+    pub fn invalid_input(
+        op: impl Into<String>,
+        rule: ADRuleKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::InvalidInput {
+            op: op.into(),
+            rule,
+            message: message.into(),
+        }
+    }
+
     /// Returns the AD rule kind associated with this error.
     ///
     /// # Examples
@@ -91,6 +127,7 @@ impl ADRuleError {
     pub const fn rule(&self) -> ADRuleKind {
         match self {
             Self::Unsupported { rule, .. } => *rule,
+            Self::InvalidInput { rule, .. } => *rule,
         }
     }
 }
@@ -100,6 +137,9 @@ impl fmt::Display for ADRuleError {
         match self {
             Self::Unsupported { op, rule } => {
                 write!(f, "unsupported {} AD rule for {op}", rule.as_str())
+            }
+            Self::InvalidInput { op, rule, message } => {
+                write!(f, "invalid {} AD input for {op}: {message}", rule.as_str())
             }
         }
     }

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use computegraph::{GraphOperation, LocalValueId, OperationRole};
 use tidu::{
-    linearize, try_linear_transpose, try_linear_transpose_with_builder, try_linearize,
-    LinearizedGraph, PrimitiveBuilder, PrimitiveValue,
+    linear_transpose, linear_transpose_with_builder, linearize, LinearizedGraph, PrimitiveBuilder,
+    PrimitiveValue,
 };
 use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
 
@@ -25,6 +25,9 @@ enum Op {
     Add,
     Missing,
     EmitMissing,
+    WrongJvp,
+    EmitWrongTranspose,
+    WrongTranspose,
 }
 
 impl GraphOperation for Op {
@@ -35,7 +38,11 @@ impl GraphOperation for Op {
     fn input_count(&self) -> usize {
         match self {
             Op::Add => 2,
-            Op::Missing | Op::EmitMissing => 1,
+            Op::Missing
+            | Op::EmitMissing
+            | Op::WrongJvp
+            | Op::EmitWrongTranspose
+            | Op::WrongTranspose => 1,
         }
     }
 
@@ -58,43 +65,22 @@ impl Primitive for Op {
         _primal_out: &[computegraph::types::ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
-        match self {
-            Op::Add => vec![tangent_in[0].or(tangent_in[1])],
-            Op::Missing => panic!("try_linearize should call try_jvp_rule"),
-            Op::EmitMissing => {
-                let Some(dx) = tangent_in[0] else {
-                    return vec![None];
-                };
-                let out = builder.add_primitive(
-                    Op::Missing,
-                    vec![PrimitiveValue::Local(dx)],
-                    OperationRole::Linearized {
-                        active_mask: vec![true],
-                    },
-                );
-                vec![Some(out[0])]
-            }
-        }
-    }
-
-    fn try_jvp_rule(
-        &self,
-        builder: &mut impl PrimitiveBuilder<Self>,
-        _primal_in: &[computegraph::types::ValueKey<Self>],
-        _primal_out: &[computegraph::types::ValueKey<Self>],
-        tangent_in: &[Option<LocalValueId>],
-        _ctx: &mut (),
     ) -> ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Op::Add => Ok(vec![tangent_in[0].or(tangent_in[1])]),
             Op::Missing => Err(ADRuleError::unsupported("Op::Missing", ADRuleKind::Jvp)),
-            Op::EmitMissing => {
+            Op::WrongJvp => Ok(vec![]),
+            Op::EmitMissing | Op::EmitWrongTranspose => {
                 let Some(dx) = tangent_in[0] else {
                     return Ok(vec![None]);
                 };
+                let emitted = match self {
+                    Op::EmitMissing => Op::Missing,
+                    Op::EmitWrongTranspose => Op::WrongTranspose,
+                    _ => unreachable!(),
+                };
                 let out = builder.add_primitive(
-                    Op::Missing,
+                    emitted,
                     vec![PrimitiveValue::Local(dx)],
                     OperationRole::Linearized {
                         active_mask: vec![true],
@@ -102,27 +88,11 @@ impl Primitive for Op {
                 );
                 Ok(vec![Some(out[0])])
             }
+            Op::WrongTranspose => Ok(vec![tangent_in[0]]),
         }
     }
 
     fn transpose_rule(
-        &self,
-        _builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_out: &[Option<LocalValueId>],
-        _inputs: &[PrimitiveValue<Self>],
-        _mode: &OperationRole,
-        _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
-        match self {
-            Op::Add => vec![cotangent_out[0], cotangent_out[0]],
-            Op::Missing => {
-                panic!("fallible linear_transpose paths should call try_linear_transpose_rule")
-            }
-            Op::EmitMissing => panic!("EmitMissing is linearized before linear_transpose"),
-        }
-    }
-
-    fn try_linear_transpose_rule(
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
@@ -136,7 +106,10 @@ impl Primitive for Op {
                 "Op::Missing",
                 ADRuleKind::Transpose,
             )),
-            Op::EmitMissing => panic!("EmitMissing is linearized before linear_transpose"),
+            Op::EmitMissing | Op::EmitWrongTranspose | Op::WrongJvp => Err(
+                ADRuleError::unsupported("test primal-only op", ADRuleKind::Transpose),
+            ),
+            Op::WrongTranspose => Ok(vec![]),
         }
     }
 }
@@ -166,10 +139,18 @@ impl PrimitiveBuilder<Op> for TestBuilder {
 }
 
 fn linearized_graph_with_missing_op() -> LinearizedGraph<Op> {
+    linearized_graph_for(Op::EmitMissing)
+}
+
+fn linearized_graph_with_wrong_transpose_op() -> LinearizedGraph<Op> {
+    linearized_graph_for(Op::EmitWrongTranspose)
+}
+
+fn linearized_graph_for(op: Op) -> LinearizedGraph<Op> {
     let mut builder = computegraph::graph::GraphBuilder::<Op>::new();
     let x = builder.add_input(Key::Base("x"));
     let out = builder.add_operation(
-        Op::EmitMissing,
+        op,
         vec![computegraph::types::ValueRef::Local(x)],
         OperationRole::Primary,
     );
@@ -186,10 +167,11 @@ fn linearized_graph_with_missing_op() -> LinearizedGraph<Op> {
         &mut (),
         &HashMap::new(),
     )
+    .expect("test linearization should build a graph containing the requested transpose rule")
 }
 
 #[test]
-fn try_linearize_propagates_jvp_rule_error() {
+fn linearize_propagates_jvp_rule_error() {
     let mut builder = computegraph::graph::GraphBuilder::<Op>::new();
     let x = builder.add_input(Key::Base("x"));
     let out = builder.add_operation(
@@ -203,7 +185,7 @@ fn try_linearize_propagates_jvp_rule_error() {
     let view = computegraph::resolve::resolve(vec![graph]);
     let mut ctx = ();
 
-    let err = match try_linearize(
+    let err = match linearize(
         &view,
         &[output_key],
         &[Key::Base("x")],
@@ -211,7 +193,7 @@ fn try_linearize_propagates_jvp_rule_error() {
         &mut ctx,
         &HashMap::new(),
     ) {
-        Ok(_) => panic!("try_linearize unexpectedly succeeded"),
+        Ok(_) => panic!("linearize unexpectedly succeeded"),
         Err(err) => err,
     };
 
@@ -219,12 +201,48 @@ fn try_linearize_propagates_jvp_rule_error() {
 }
 
 #[test]
-fn try_linear_transpose_propagates_transpose_error() {
+fn linearize_reports_wrong_jvp_arity_as_invalid_input() {
+    let mut builder = computegraph::graph::GraphBuilder::<Op>::new();
+    let x = builder.add_input(Key::Base("x"));
+    let out = builder.add_operation(
+        Op::WrongJvp,
+        vec![computegraph::types::ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(out.clone());
+    let graph = Arc::new(builder.build());
+    let output_key = graph.values()[out[0]].key.clone();
+    let view = computegraph::resolve::resolve(vec![graph]);
+    let mut ctx = ();
+
+    let err = match linearize(
+        &view,
+        &[output_key],
+        &[Key::Base("x")],
+        1,
+        &mut ctx,
+        &HashMap::new(),
+    ) {
+        Ok(_) => panic!("linearize unexpectedly succeeded"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        ADRuleError::InvalidInput {
+            rule: ADRuleKind::Jvp,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn linear_transpose_propagates_transpose_error() {
     let linear = linearized_graph_with_missing_op();
     let mut ctx = ();
 
-    let err = match try_linear_transpose(&linear, &mut ctx) {
-        Ok(_) => panic!("try_linear_transpose unexpectedly succeeded"),
+    let err = match linear_transpose(&linear, &mut ctx) {
+        Ok(_) => panic!("linear_transpose unexpectedly succeeded"),
         Err(err) => err,
     };
 
@@ -232,14 +250,52 @@ fn try_linear_transpose_propagates_transpose_error() {
 }
 
 #[test]
-fn try_linear_transpose_with_builder_propagates_transpose_error() {
+fn linear_transpose_reports_wrong_transpose_arity_as_invalid_input() {
+    let linear = linearized_graph_with_wrong_transpose_op();
+    let mut ctx = ();
+
+    let err = match linear_transpose(&linear, &mut ctx) {
+        Ok(_) => panic!("linear_transpose unexpectedly succeeded"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        ADRuleError::InvalidInput {
+            rule: ADRuleKind::Transpose,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn linear_transpose_with_builder_propagates_transpose_error() {
     let linear = linearized_graph_with_missing_op();
     let mut builder = TestBuilder::default();
     let seed = builder.add_input();
     let mut ctx = ();
 
-    let err = try_linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ctx)
-        .unwrap_err();
+    let err =
+        linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ctx).unwrap_err();
 
     assert_eq!(err.rule(), ADRuleKind::Transpose);
+}
+
+#[test]
+fn linear_transpose_with_builder_reports_wrong_transpose_arity_as_invalid_input() {
+    let linear = linearized_graph_with_wrong_transpose_op();
+    let mut builder = TestBuilder::default();
+    let seed = builder.add_input();
+    let mut ctx = ();
+
+    let err =
+        linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ctx).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ADRuleError::InvalidInput {
+            rule: ADRuleKind::Transpose,
+            ..
+        }
+    ));
 }

@@ -27,7 +27,7 @@ the tidu PR merges, because they depend on the final tidu commit hash and API.
 - Add `src/primitive_graph.rs`: lightweight public wrapper for lower-level primitive graphs passed across eager executor boundaries.
 - Modify `src/rules/ad_rule_error.rs` and `src/rules/mod.rs`: expose JAX-aligned rule kinds and names.
 - Modify `src/eager/record.rs`, `src/eager/backward.rs`, `src/eager/mod.rs`, and `src/eager/trace.rs`: rename eager input/output types and remove raw fragment parameters from eager executor signatures.
-- Delete or stop exporting `src/emit.rs`: replace `tidu::emit::try_transpose_fragment` with `try_linear_transpose_with_builder`.
+- Delete or stop exporting `src/emit.rs`: replace `tidu::emit::linear_transpose_with_builder` with `linear_transpose_with_builder`.
 - Modify `tests/common/*` and all Rust tests under `tests/`: migrate tests to new API names and add public API assertions.
 - Modify `README.md` and `src/lib.rs` rustdoc: short front door and self-contained conceptual entry point.
 - Create `docs/_quarto.yml`, `docs/index.md`, `docs/getting-started/*`, `docs/tutorials/*`, `docs/guides/*`, `docs/architecture/*`, `docs/api/index.md`, and `docs/internals/index.md`.
@@ -122,7 +122,7 @@ In `tests/fallible_ad_tests.rs`, change the import block to:
 ```rust
 use computegraph::{GraphOp, LocalValId, OpMode};
 use tidu::{
-    try_linear_transpose, try_linear_transpose_with_builder, try_linearize,
+    linear_transpose, linear_transpose_with_builder, linearize,
     LinearizedGraph, PrimitiveBuilder, PrimitiveValue,
 };
 use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
@@ -131,20 +131,20 @@ use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
 Rename test functions:
 
 ```rust
-fn try_linearize_propagates_jvp_rule_error()
-fn try_linear_transpose_propagates_transpose_error()
-fn try_linear_transpose_with_builder_propagates_transpose_error()
+fn linearize_propagates_jvp_rule_error()
+fn linear_transpose_propagates_transpose_error()
+fn linear_transpose_with_builder_propagates_transpose_error()
 ```
 
 - [ ] **Step 5: Update eager tests to the intended names**
 
-In eager tests, replace imports of `Input` and `Output` with `EagerInput` and `EagerOutput`, replace `tidu::LinearFragment` with `tidu::LinearizedGraph`, and replace `emit::try_transpose_fragment` with `tidu::try_linear_transpose_with_builder`.
+In eager tests, replace imports of `Input` and `Output` with `EagerInput` and `EagerOutput`, replace `tidu::LinearFragment` with `tidu::LinearizedGraph`, and replace `emit::linear_transpose_with_builder` with `tidu::linear_transpose_with_builder`.
 
 Example target import:
 
 ```rust
 use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, Recorder};
-use tidu::{linearize, try_linear_transpose_with_builder, LinearizedGraph};
+use tidu::{linearize, linear_transpose_with_builder, LinearizedGraph};
 ```
 
 - [ ] **Step 6: Run red tests**
@@ -304,7 +304,7 @@ where
     where
         Self: Sized;
 
-    fn try_jvp_rule(
+    fn jvp_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         primal_inputs: &[GlobalValKey<Self>],
@@ -329,7 +329,7 @@ where
     where
         Self: Sized;
 
-    fn try_transpose_rule(
+    fn transpose_rule(
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValId>],
@@ -395,16 +395,16 @@ In `src/lib.rs`, replace `PrimitiveOp` with `Primitive` in root re-exports.
 Run:
 
 ```bash
-rg -l "PrimitiveOp|try_linearize\\(|linearize\\(" src tests | xargs perl -0pi -e 's/PrimitiveOp/Primitive/g; s/try_linearize\\(/try_jvp_rule(/g'
+rg -l "PrimitiveOp|linearize\\(|linearize\\(" src tests | xargs perl -0pi -e 's/PrimitiveOp/Primitive/g; s/linearize\\(/jvp_rule(/g'
 ```
 
 Then run this check and fix only the printed lines:
 
 ```bash
-rg -n "try_jvp_rule\\(&view|try_jvp_rule\\(view|fn try_jvp_rule<|pub fn try_jvp_rule<" src tests
+rg -n "jvp_rule\\(&view|jvp_rule\\(view|fn jvp_rule<|pub fn jvp_rule<" src tests
 ```
 
-Expected before fixes: any graph-transform function accidentally renamed from `try_linearize` to `try_jvp_rule` is printed. Expected after fixes: no graph-transform function definitions or calls are printed by this command.
+Expected before fixes: any graph-transform function accidentally renamed from `linearize` to `jvp_rule` is printed. Expected after fixes: no graph-transform function definitions or calls are printed by this command.
 
 - [ ] **Step 5: Run focused test**
 
@@ -574,13 +574,13 @@ pub fn linearize<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    match try_linearize(view, outputs, wrt, pass, ctx, aliases) {
+    match linearize(view, outputs, wrt, pass, ctx, aliases) {
         Ok(linear) => linear,
         Err(err) => panic!("{err}"),
     }
 }
 
-pub fn try_linearize<Op: Primitive>(
+pub fn linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
     outputs: &[GlobalValKey<Op>],
     wrt: &[Op::InputKey],
@@ -596,7 +596,7 @@ Replace the call to primitive local rule with:
 
 ```rust
 let mut primitive_builder = crate::rules::FragmentPrimitiveBuilder::new(&mut builder);
-let tangent_out = op.try_jvp_rule(
+let tangent_out = op.jvp_rule(
     &mut primitive_builder,
     &input_keys,
     &output_keys,
@@ -627,7 +627,7 @@ pub fn linear_transpose<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 
-pub fn try_linear_transpose<Op: Primitive>(
+pub fn linear_transpose<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<LinearizedGraph<Op>>
@@ -676,7 +676,7 @@ for op_node in graph.ops().iter().rev() {
         })
         .collect();
 
-    let cotangent_in = op_node.op.try_transpose_rule(
+    let cotangent_in = op_node.op.transpose_rule(
         &mut primitive_builder,
         &cotangent_out,
         &rule_inputs,
@@ -706,7 +706,7 @@ Ok(LinearizedGraph::from_parts(
 In `src/linear_transpose.rs`, add:
 
 ```rust
-pub fn try_linear_transpose_with_builder<Op: Primitive>(
+pub fn linear_transpose_with_builder<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
     builder: &mut impl PrimitiveBuilder<Op>,
     cotangent_seeds: &[Option<LocalValId>],
@@ -748,7 +748,7 @@ where
             })
             .collect();
 
-        let cotangent_in = op_node.op.try_transpose_rule(
+        let cotangent_in = op_node.op.transpose_rule(
             builder,
             &cotangent_out,
             &rule_inputs,
@@ -821,8 +821,8 @@ In `src/lib.rs`, replace:
 ```rust
 mod differentiate;
 mod transpose;
-pub use differentiate::{differentiate, try_differentiate};
-pub use transpose::{transpose, try_transpose};
+pub use differentiate::{differentiate, linearize};
+pub use transpose::{transpose, linear_transpose};
 ```
 
 with:
@@ -831,9 +831,9 @@ with:
 mod linear_transpose;
 mod linearize;
 pub use linear_transpose::{
-    linear_transpose, try_linear_transpose, try_linear_transpose_with_builder,
+    linear_transpose, linear_transpose, linear_transpose_with_builder,
 };
-pub use linearize::{linearize, try_linearize};
+pub use linearize::{linearize, linearize};
 ```
 
 - [ ] **Step 6: Remove `pub mod emit`**
@@ -962,7 +962,7 @@ where
 
 - [ ] **Step 5: Pass `PrimitiveGraph` from eager backward**
 
-In `try_backward`, replace the forward replay call with:
+In `backward`, replace the forward replay call with:
 
 ```rust
 let replay_graph = PrimitiveGraph::new(linear.as_graph());
@@ -974,13 +974,13 @@ let all_values = executor.execute_forward(replay_graph, node.saved_data());
 In `src/eager/backward.rs`, replace:
 
 ```rust
-crate::try_differentiate(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
+crate::linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 ```
 
 with:
 
 ```rust
-crate::try_linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
+crate::linearize(&view, &output_keys, &wrt_keys, 0, ctx, &aliases)
 ```
 
 - [ ] **Step 7: Update eager tests**
@@ -993,10 +993,10 @@ The helper named `scalar_input` must return `EagerInput<ScalarOp>` instead of
 The helper named `scalar_input_from_output` must accept
 `&tidu::eager::EagerOutput<ScalarOp>` and return `EagerInput<ScalarOp>`.
 
-Replace all `emit::try_transpose_fragment(...)` calls with:
+Replace all `emit::linear_transpose_with_builder(...)` calls with:
 
 ```rust
-tidu::try_linear_transpose_with_builder(linear, &mut transpose_builder, &cotangent_seed_ids, ctx)
+tidu::linear_transpose_with_builder(linear, &mut transpose_builder, &cotangent_seed_ids, ctx)
 ```
 
 - [ ] **Step 8: Run eager tests**
@@ -1032,15 +1032,15 @@ git commit -m "refactor: align eager integration API"
 Run:
 
 ```bash
-rg -l "differentiate|try_differentiate|transpose\\(|try_transpose|LinearFragment|PrimitiveOp|OpEmitter|emit::" \
+rg -l "differentiate|linearize|transpose\\(|linear_transpose|LinearFragment|PrimitiveOp|OpEmitter|emit::" \
   tests src README.md docs/getting-started docs/tutorials docs/guides docs/architecture docs/api docs/internals \
-  | xargs perl -0pi -e 's/try_differentiate/try_linearize/g; s/differentiate/linearize/g; s/try_transpose/try_linear_transpose/g; s/\\btranspose\\(/linear_transpose(/g; s/LinearFragment/LinearizedGraph/g; s/PrimitiveOp/Primitive/g; s/OpEmitter/PrimitiveBuilder/g'
+  | xargs perl -0pi -e 's/linearize/linearize/g; s/differentiate/linearize/g; s/linear_transpose/linear_transpose/g; s/\\btranspose\\(/linear_transpose(/g; s/LinearFragment/LinearizedGraph/g; s/PrimitiveOp/Primitive/g; s/OpEmitter/PrimitiveBuilder/g'
 ```
 
 Then inspect every line printed by:
 
 ```bash
-rg -n "differentiate|try_differentiate|transpose\\(|try_transpose|LinearFragment|PrimitiveOp|OpEmitter|emit::" \
+rg -n "differentiate|linearize|transpose\\(|linear_transpose|LinearFragment|PrimitiveOp|OpEmitter|emit::" \
   src tests README.md docs/getting-started docs/tutorials docs/guides docs/architecture docs/api docs/internals \
   -g '*.rs' -g '*.md'
 ```
@@ -1292,7 +1292,7 @@ Expected: PASS.
 Run:
 
 ```bash
-rg -n "differentiate|try_differentiate|LinearFragment|PrimitiveOp|OpEmitter|tidu::emit|eager::Input|eager::Output" \
+rg -n "differentiate|linearize|LinearFragment|PrimitiveOp|OpEmitter|tidu::emit|eager::Input|eager::Output" \
   README.md src tests docs/getting-started docs/tutorials docs/guides docs/architecture docs/api docs/internals
 ```
 

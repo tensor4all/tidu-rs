@@ -4,7 +4,7 @@ use std::sync::Arc;
 use computegraph::compile::compile;
 use computegraph::graph::Graph;
 use computegraph::materialize::materialize_merge;
-use computegraph::resolve::resolve;
+use computegraph::resolve::{resolve, ResolvedView};
 use computegraph::types::{LocalValueId, OperationRole, ValueKey};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::LinearizedGraph;
@@ -68,7 +68,7 @@ impl Primitive for ScalarOp {
         primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             ScalarOp::Add => linearize_add!(builder, ScalarOp::Add, tangent_in[0], tangent_in[1]),
             ScalarOp::Mul => {
@@ -93,10 +93,10 @@ impl Primitive for ScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
@@ -134,6 +134,33 @@ where
     let ordered_refs: Vec<&Op::Operand> = ordered_inputs.iter().collect();
     let program = compile(&graph);
     program.eval(&mut Default::default(), &ordered_refs)
+}
+
+pub fn linearize<Op>(
+    view: &ResolvedView<Op>,
+    outputs: &[ValueKey<Op>],
+    wrt: &[Op::InputKey],
+    pass: DiffPassId,
+    ctx: &mut Op::ADContext,
+    aliases: &HashMap<Op::InputKey, ValueKey<Op>>,
+) -> LinearizedGraph<Op>
+where
+    Op: Primitive,
+    Op::InputKey: ADKey,
+{
+    tidu::linearize(view, outputs, wrt, pass, ctx, aliases)
+        .expect("test graph should linearize successfully")
+}
+
+pub fn linear_transpose<Op>(
+    linear: &LinearizedGraph<Op>,
+    ctx: &mut Op::ADContext,
+) -> LinearizedGraph<Op>
+where
+    Op: Primitive,
+    Op::InputKey: ADKey,
+{
+    tidu::linear_transpose(linear, ctx).expect("test graph should transpose successfully")
 }
 
 pub fn tangent_input_key<Op>(linear: &LinearizedGraph<Op>, index: usize) -> ValueKey<Op>

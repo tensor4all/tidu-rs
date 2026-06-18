@@ -9,8 +9,8 @@ selected input keys, a `DiffPassId`, mutable AD context, and input aliases. It
 returns a `LinearizedGraph`.
 
 The returned graph has tangent inputs for the selected primal inputs and tangent
-outputs for the selected primal outputs. Use `try_linearize` when primitive
-rules can fail.
+outputs for the selected primal outputs. Primitive rule failures are reported
+through the returned `ADRuleResult`.
 
 ## Linear Transpose
 
@@ -18,8 +18,7 @@ rules can fail.
 `LinearizedGraph` whose inputs are cotangent seeds and whose outputs are
 cotangents for the original active inputs.
 
-Use `try_linear_transpose` when transpose rules can fail. Use
-`try_linear_transpose_with_builder` when a downstream eager runtime wants to
+Use `linear_transpose_with_builder` when a downstream eager runtime wants to
 execute the transposed linear map directly through a concrete builder.
 
 ## Repeated Transforms

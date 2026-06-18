@@ -6,14 +6,16 @@ use std::sync::Arc;
 use common::assertions::{
     assert_complex_approx_eq, assert_scalar_approx_eq, assert_tensor_approx_eq,
 };
-use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
+use common::{
+    evaluate, linear_transpose, linearize, tangent_input_key, tangent_output_key, ScalarKey,
+    ScalarOp,
+};
 use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
-use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
@@ -179,7 +181,7 @@ impl Primitive for ComplexScalarOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => {
                 linearize_add!(builder, ComplexScalarOp::Add, tangent_in[0], tangent_in[1])
@@ -203,10 +205,10 @@ impl Primitive for ComplexScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
@@ -319,7 +321,7 @@ impl Primitive for VectorOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
             Self::Mul => linearize_mul!(
@@ -340,10 +342,10 @@ impl Primitive for VectorOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {

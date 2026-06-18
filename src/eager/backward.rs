@@ -35,7 +35,7 @@ where
 }
 
 /// Execute reverse-mode AD over an eager trace.
-pub fn try_backward<Op: Primitive>(
+pub fn backward<Op: Primitive>(
     output_key: &ValueKey<Op>,
     output_trace: Option<&Trace<Op>>,
     seed: Arc<Op::Operand>,
@@ -68,9 +68,7 @@ where
             }
         }
 
-        let linear = node
-            .computation()
-            .try_linearize(&active_output_slots, ctx)?;
+        let linear = node.computation().linearize(&active_output_slots, ctx)?;
         let replay_graph = PrimitiveGraph::new(linear.as_graph());
         let all_values = executor.execute_forward(replay_graph, node.saved_data());
         let cotangent_in =

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::rules::GraphPrimitiveBuilder;
-use crate::{ADKey, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue};
+use crate::{
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue,
+};
 use computegraph::graph::GraphBuilder;
 use computegraph::{LocalValueId, OperationRole, ValueKey, ValueRef};
 
@@ -16,27 +18,11 @@ use crate::LinearizedGraph;
 ///
 /// ```ignore
 /// let mut ctx = ();
-/// let transposed = tidu::linear_transpose(&linear, &mut ctx);
+/// let transposed = tidu::linear_transpose(&linear, &mut ctx)?;
 /// assert_eq!(transposed.tangent_outputs().len(), linear.tangent_inputs().len());
+/// # Ok::<(), tidu::ADRuleError>(())
 /// ```
 pub fn linear_transpose<Op: Primitive>(
-    linear: &LinearizedGraph<Op>,
-    ctx: &mut Op::ADContext,
-) -> LinearizedGraph<Op>
-where
-    Op::InputKey: ADKey,
-{
-    match try_linear_transpose(linear, ctx) {
-        Ok(transposed) => transposed,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Fallible form of [`linear_transpose`].
-///
-/// This returns [`crate::ADRuleError`] when a primitive cannot emit a
-/// transpose rule.
-pub fn try_linear_transpose<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
     ctx: &mut Op::ADContext,
 ) -> ADRuleResult<LinearizedGraph<Op>>
@@ -54,7 +40,7 @@ where
         };
 
         let source_key = graph.values()[*tangent_output_id].key.clone();
-        let seed_key = cotangent_seed_key(linear, index);
+        let seed_key = cotangent_seed_key(linear, index)?;
         let seed_id = builder.add_input(seed_key.clone());
         cotangent_env.insert(source_key, seed_id);
         cotangent_seed_inputs.push((seed_key, seed_id));
@@ -82,21 +68,24 @@ where
             .collect();
 
         let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
-        let cotangent_in = op_node.operation.try_linear_transpose_rule(
+        let cotangent_in = op_node.operation.transpose_rule(
             &mut primitive_builder,
             &cotangent_out,
             &rule_inputs,
             &op_node.role,
             ctx,
         )?;
-        assert_eq!(
-            cotangent_in.len(),
-            rule_inputs.len(),
-            "transpose_rule for {:?} returned {} cotangents for {} inputs",
-            op_node.operation,
-            cotangent_in.len(),
-            rule_inputs.len()
-        );
+        if cotangent_in.len() != rule_inputs.len() {
+            return Err(ADRuleError::invalid_input(
+                format!("{:?}", op_node.operation),
+                ADRuleKind::Transpose,
+                format!(
+                    "rule returned {} cotangents for {} inputs",
+                    cotangent_in.len(),
+                    rule_inputs.len()
+                ),
+            ));
+        }
 
         for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
             let Some(cotangent_id) = maybe_cotangent else {
@@ -152,7 +141,7 @@ where
 }
 
 /// Execute the transpose of a linearized graph using a caller-provided builder.
-pub fn try_linear_transpose_with_builder<Op: Primitive>(
+pub fn linear_transpose_with_builder<Op: Primitive>(
     linear: &LinearizedGraph<Op>,
     builder: &mut impl PrimitiveBuilder<Op>,
     cotangent_seeds: &[Option<LocalValueId>],
@@ -194,21 +183,24 @@ where
             })
             .collect();
 
-        let cotangent_in = op_node.operation.try_linear_transpose_rule(
+        let cotangent_in = op_node.operation.transpose_rule(
             builder,
             &cotangent_out,
             &rule_inputs,
             &op_node.role,
             ctx,
         )?;
-        assert_eq!(
-            cotangent_in.len(),
-            rule_inputs.len(),
-            "transpose_rule for {:?} returned {} cotangents for {} inputs",
-            op_node.operation,
-            cotangent_in.len(),
-            rule_inputs.len()
-        );
+        if cotangent_in.len() != rule_inputs.len() {
+            return Err(ADRuleError::invalid_input(
+                format!("{:?}", op_node.operation),
+                ADRuleKind::Transpose,
+                format!(
+                    "rule returned {} cotangents for {} inputs",
+                    cotangent_in.len(),
+                    rule_inputs.len()
+                ),
+            ));
+        }
 
         for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
             let Some(cotangent_id) = maybe_cotangent else {
@@ -252,16 +244,22 @@ where
         .collect())
 }
 
-fn cotangent_seed_key<Op: Primitive>(linear: &LinearizedGraph<Op>, index: usize) -> Op::InputKey
+fn cotangent_seed_key<Op: Primitive>(
+    linear: &LinearizedGraph<Op>,
+    index: usize,
+) -> ADRuleResult<Op::InputKey>
 where
     Op::InputKey: ADKey,
 {
-    assert!(
-        !linear.tangent_inputs().is_empty(),
-        "active tangent outputs require at least one tangent input to derive seed keys"
-    );
+    if linear.tangent_inputs().is_empty() {
+        return Err(ADRuleError::invalid_input(
+            "tidu::linear_transpose",
+            ADRuleKind::Transpose,
+            "active tangent outputs require at least one tangent input to derive seed keys",
+        ));
+    }
 
     let base_slot = index.min(linear.tangent_inputs().len() - 1);
     let base_key = &linear.tangent_inputs()[base_slot].0;
-    base_key.tangent_of(u64::MAX - index as u64)
+    Ok(base_key.tangent_of(u64::MAX - index as u64))
 }

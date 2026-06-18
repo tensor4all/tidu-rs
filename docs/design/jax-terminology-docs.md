@@ -71,9 +71,10 @@ the crate would make the docs harder to learn.
 The root graph-transform API should be documented with the current
 JAX-aligned names:
 
-- `linearize` and `try_linearize` build a linearized graph for selected inputs.
-- `linear_transpose` and `try_linear_transpose` transpose a linearized graph
-  for cotangent propagation.
+- `linearize` builds a linearized graph for selected inputs and returns
+  `ADRuleResult`.
+- `linear_transpose` transposes a linearized graph for cotangent propagation and
+  returns `ADRuleResult`.
 - `LinearizedGraph` is the public wrapper for graph transform results.
 - `Primitive` is the public trait implemented by downstream operation sets.
 
@@ -108,7 +109,7 @@ tidu::eager::{
     KeySource,
     Recorder,
     Trace,
-    try_backward,
+    backward,
 }
 ```
 
@@ -193,7 +194,7 @@ Provide two runnable tutorial paths:
 1. **Primitive linearization tutorial**: define a tiny primitive set, implement
    `Primitive`, run `linearize`, and run `linear_transpose`.
 2. **Eager reverse-mode tutorial**: use `Recorder`, `Trace`,
-   `BackwardExecutor`, and `try_backward` to connect immediate downstream
+   `BackwardExecutor`, and `backward` to connect immediate downstream
    execution to reverse-mode AD.
 
 Tutorial code should live in `examples/` or test modules and be executed by CI,
@@ -236,8 +237,8 @@ The implementation should be staged:
 7. Migrate downstream crates such as tenferro after the `tidu` changes merge.
 
 Because this is a pre-1.0 crate and the current vocabulary leaks implementation
-details, this plan intentionally prefers one coherent breaking migration over
-additive compatibility aliases.
+details, this plan intentionally prefers one coherent breaking migration and
+removes obsolete names instead of keeping parallel aliases.
 
 ## Concrete API Decisions To Validate
 

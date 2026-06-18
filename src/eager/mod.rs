@@ -4,6 +4,9 @@ mod backward;
 mod record;
 mod trace;
 
-pub use backward::{try_backward, BackwardExecutor};
-pub use record::{EagerInput, EagerOutput, KeySource, RecordedGraph, Recorder};
+pub use backward::{backward, BackwardExecutor};
+pub use record::{
+    EagerInput, EagerOutput, EagerRecordError, EagerRecordResult, KeySource, RecordedGraph,
+    Recorder,
+};
 pub use trace::Trace;

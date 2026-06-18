@@ -36,7 +36,7 @@ The following remain implementation details:
 Downstream frontends should not construct trace nodes, trace edges, or saved
 forward maps by hand. They should build a `RecordedGraph`, pass eager inputs and
 concrete outputs to a `Recorder`, store the returned output keys and trace
-handles, then call `try_backward` from their public tensor API.
+handles, then call `backward` from their public tensor API.
 
 ## Downstream Responsibilities
 
@@ -60,14 +60,14 @@ items live under `tidu::eager`:
 ```rust
 tidu::eager::{
     BackwardExecutor, EagerInput, EagerOutput, KeySource, RecordedGraph, Recorder, Trace,
-    try_backward,
+    backward,
 }
 ```
 
 Builder-backed transpose helpers live at the crate root:
 
 ```rust
-tidu::try_linear_transpose_with_builder(...)
+tidu::linear_transpose_with_builder(...)
 ```
 
 This prevents two different "eager modes" from appearing at the root API:

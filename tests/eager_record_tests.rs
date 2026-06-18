@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
-use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, RecordedGraph, Recorder};
+use tidu::eager::{
+    self, BackwardExecutor, EagerInput, EagerRecordError, KeySource, RecordedGraph, Recorder,
+};
 use tidu::{
-    try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
-    PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
+    linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive, PrimitiveBuilder,
+    PrimitiveGraph, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -80,9 +82,9 @@ impl Primitive for RecorderOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Add => add_tangents(builder, tangent_in),
+            Self::Add => Ok(add_tangents(builder, tangent_in)),
             Self::Mul => {
                 let mut terms = Vec::new();
                 if let Some(dx) = tangent_in[0] {
@@ -111,9 +113,9 @@ impl Primitive for RecorderOp {
                     );
                     terms.push(term[0]);
                 }
-                sum_terms(builder, terms)
+                Ok(sum_terms(builder, terms))
             }
-            Self::Neg => tangent_in[0].map_or_else(
+            Self::Neg => Ok(tangent_in[0].map_or_else(
                 || vec![None],
                 |dx| {
                     let out = builder.add_primitive(
@@ -125,10 +127,10 @@ impl Primitive for RecorderOp {
                     );
                     vec![Some(out[0])]
                 },
-            ),
+            )),
             Self::Split => {
                 let Some(dx) = tangent_in[0] else {
-                    return vec![None, None];
+                    return Ok(vec![None, None]);
                 };
                 let neg = builder.add_primitive(
                     Self::Neg,
@@ -137,9 +139,9 @@ impl Primitive for RecorderOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(dx), Some(neg[0])]
+                Ok(vec![Some(dx), Some(neg[0])])
             }
-            Self::Sum3 => add_tangents(builder, tangent_in),
+            Self::Sum3 => Ok(add_tangents(builder, tangent_in)),
         }
     }
 
@@ -150,15 +152,15 @@ impl Primitive for RecorderOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => transpose_mul(builder, inputs, ct, role),
+            Self::Add => Ok(vec![Some(ct), Some(ct)]),
+            Self::Mul => Ok(transpose_mul(builder, inputs, ct, role)),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
@@ -167,10 +169,10 @@ impl Primitive for RecorderOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
             Self::Split => panic!("Split is linearized before linear_transpose"),
-            Self::Sum3 => vec![Some(ct), Some(ct), Some(ct)],
+            Self::Sum3 => Ok(vec![Some(ct), Some(ct), Some(ct)]),
         }
     }
 }
@@ -274,14 +276,17 @@ fn record_op(
     outputs: &[Arc<f64>],
 ) -> Vec<tidu::eager::EagerOutput<RecorderOp>> {
     let graph_input_keys = recorder.fresh_input_keys::<RecorderOp>(inputs.len());
-    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys)
+        .expect("test primitive graph metadata should be valid");
     let retained = graph
         .output_keys()
         .iter()
         .cloned()
         .zip(outputs.iter().cloned())
         .collect();
-    recorder.record_graph(graph, inputs, outputs, retained)
+    recorder
+        .record_graph(graph, inputs, outputs, retained)
+        .expect("test eager recording metadata should be valid")
 }
 
 struct EagerBuilder {
@@ -400,7 +405,7 @@ impl BackwardExecutor<RecorderOp> for Callbacks {
             .iter()
             .map(|seed| seed.as_ref().map(|value| builder.push(value.clone())))
             .collect();
-        try_linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx).map(|ids| {
+        linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx).map(|ids| {
             ids.into_iter()
                 .map(|id| id.map(|id| builder.value(id)))
                 .collect()
@@ -418,7 +423,7 @@ fn record_eager_binary_op_and_skips_inactive_input_cotangents() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = record_op(&mut recorder, RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
     let mut callbacks = Callbacks::default();
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[0].key,
         outputs[0].trace.as_ref(),
         Arc::new(1.0),
@@ -435,6 +440,60 @@ fn record_eager_binary_op_and_skips_inactive_input_cotangents() {
 }
 
 #[test]
+fn recorded_graph_new_reports_mismatched_input_key_count() {
+    let mut builder = computegraph::graph::GraphBuilder::<RecorderOp>::new();
+    let x = builder.add_input(Key::User("x".into()));
+    let y = builder.add_input(Key::User("y".into()));
+    let out = builder.add_operation(
+        RecorderOp::Add,
+        vec![ValueRef::Local(x), ValueRef::Local(y)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(out.clone());
+    let graph = Arc::new(builder.build());
+    let output_keys = out
+        .iter()
+        .map(|output_id| graph.values()[*output_id].key.clone())
+        .collect();
+
+    let err = match RecordedGraph::new(graph, vec![Key::User("x".into())], output_keys) {
+        Ok(_) => panic!("RecordedGraph::new unexpectedly accepted mismatched input keys"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::CountMismatch {
+            field: "RecordedGraph input keys",
+            expected: 2,
+            actual: 1
+        }
+    ));
+}
+
+#[test]
+fn record_graph_reports_mismatched_input_count() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let graph_inputs = recorder.fresh_input_keys::<RecorderOp>(1);
+    let graph = RecordedGraph::from_primitive(RecorderOp::Neg, graph_inputs)
+        .expect("test primitive graph metadata should be valid");
+
+    let err = match recorder.record_graph(graph, &[], &[Arc::new(-1.0)], HashMap::new()) {
+        Ok(_) => panic!("Recorder::record_graph unexpectedly accepted mismatched inputs"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::CountMismatch {
+            field: "Recorder::record_graph inputs",
+            expected: 1,
+            actual: 0
+        }
+    ));
+}
+
+#[test]
 fn record_eager_nary_op_builds_all_input_edges() {
     let inputs = vec![
         eager_value("a", 1.0, true),
@@ -444,7 +503,7 @@ fn record_eager_nary_op_builds_all_input_edges() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = record_op(&mut recorder, RecorderOp::Sum3, &inputs, &[Arc::new(6.0)]);
     let mut callbacks = Callbacks::default();
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[0].key,
         outputs[0].trace.as_ref(),
         Arc::new(1.0),
@@ -477,7 +536,7 @@ fn record_eager_multi_output_op_uses_one_node_and_seeds_nonzero_slot() {
     assert!(outputs[1].trace.is_some());
 
     let mut callbacks = Callbacks::default();
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[1].key,
         outputs[1].trace.as_ref(),
         Arc::new(1.0),

@@ -8,17 +8,14 @@
 //!
 //! The main transforms are:
 //!
-//! - [`linearize`] / [`try_linearize`], which build a graph for a
-//!   Jacobian-vector product (JVP) of selected outputs with respect to selected
-//!   inputs.
-//! - [`linear_transpose`] / [`try_linear_transpose`], which transpose a
-//!   linearized graph so cotangents can flow backward through the corresponding
-//!   linear map.
-//! - [`eager::try_backward`], which supports downstream eager frontends that
+//! - [`linearize`], which builds a graph for a Jacobian-vector product (JVP)
+//!   of selected outputs with respect to selected inputs.
+//! - [`linear_transpose`], which transposes a linearized graph so cotangents
+//!   can flow backward through the corresponding linear map.
+//! - [`eager::backward`], which supports downstream eager frontends that
 //!   record graph invocations and want a reverse-mode `backward()` workflow.
 //!
-//! Fallible variants (`try_linearize`, `try_linear_transpose`, and
-//! `eager::try_backward`) propagate [`ADRuleError`] for missing primitive or
+//! These transforms propagate [`ADRuleError`] for missing primitive or
 //! extension AD rules.
 //!
 //! See the repository `docs/` tree for the terminology guide, tutorials, and
@@ -28,13 +25,13 @@
 //!
 //! ```ignore
 //! use computegraph::resolve::resolve;
-//! use tidu::{try_linear_transpose, try_linearize};
+//! use tidu::{linear_transpose, linearize};
 //!
 //! let view = resolve(vec![source_graph]);
 //! let mut ctx = ();
 //! let aliases = std::collections::HashMap::new();
-//! let linear = try_linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
-//! let _transposed = try_linear_transpose(&linear, &mut ctx)?;
+//! let linear = linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
+//! let _transposed = linear_transpose(&linear, &mut ctx)?;
 //! # Ok::<(), tidu::ADRuleError>(())
 //! ```
 
@@ -45,10 +42,8 @@ mod linearized_graph;
 mod primitive_graph;
 pub mod rules;
 
-pub use linear_transpose::{
-    linear_transpose, try_linear_transpose, try_linear_transpose_with_builder,
-};
-pub use linearize::{linearize, try_linearize};
+pub use linear_transpose::{linear_transpose, linear_transpose_with_builder};
+pub use linearize::linearize;
 pub use linearized_graph::LinearizedGraph;
 pub use primitive_graph::PrimitiveGraph;
 pub use rules::{

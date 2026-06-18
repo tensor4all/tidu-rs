@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 
-use crate::{ADKey, ADRuleResult, Primitive};
+use crate::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, Primitive};
 use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::{GraphOperation, OperationRole, ValueKey, ValueRef};
@@ -9,6 +11,82 @@ use computegraph::{GraphOperation, OperationRole, ValueKey, ValueRef};
 use crate::LinearizedGraph;
 
 use super::trace::{Trace, TraceEdge, TraceNode};
+
+/// Error returned when eager graph recording receives inconsistent metadata.
+///
+/// These errors describe caller-visible recording contract violations. AD rule
+/// failures during linearization are still reported as [`crate::ADRuleError`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EagerRecordError {
+    /// A caller supplied a slice whose length must match graph metadata.
+    CountMismatch {
+        /// Name of the validated field.
+        field: &'static str,
+        /// Required length.
+        expected: usize,
+        /// Supplied length.
+        actual: usize,
+    },
+    /// A caller supplied keys in an order that does not match the graph.
+    KeyMismatch {
+        /// Name of the validated field.
+        field: &'static str,
+        /// Mismatching slot.
+        index: usize,
+    },
+    /// The graph has more outputs than eager tracing can address.
+    TooManyOutputs {
+        /// Supplied output count.
+        actual: usize,
+        /// Maximum accepted output count.
+        max: usize,
+    },
+}
+
+impl EagerRecordError {
+    pub(crate) fn count_mismatch(field: &'static str, expected: usize, actual: usize) -> Self {
+        Self::CountMismatch {
+            field,
+            expected,
+            actual,
+        }
+    }
+
+    pub(crate) fn key_mismatch(field: &'static str, index: usize) -> Self {
+        Self::KeyMismatch { field, index }
+    }
+
+    fn too_many_outputs(actual: usize) -> Self {
+        Self::TooManyOutputs {
+            actual,
+            max: u8::MAX as usize + 1,
+        }
+    }
+}
+
+impl fmt::Display for EagerRecordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CountMismatch {
+                field,
+                expected,
+                actual,
+            } => write!(f, "{field} expected {expected} entries, got {actual}"),
+            Self::KeyMismatch { field, index } => {
+                write!(f, "{field} does not match graph metadata at slot {index}")
+            }
+            Self::TooManyOutputs { actual, max } => write!(
+                f,
+                "eager recording supports at most {max} outputs, got {actual}"
+            ),
+        }
+    }
+}
+
+impl Error for EagerRecordError {}
+
+/// Result type used by eager graph recording APIs.
+pub type EagerRecordResult<T> = Result<T, EagerRecordError>;
 
 /// Graph invocation recorded as one eager reverse-mode trace node.
 ///
@@ -30,9 +108,10 @@ use super::trace::{Trace, TraceEdge, TraceNode};
 ///     fn output_count(&self) -> usize { 1 }
 /// }
 ///
-/// let recorded = RecordedGraph::from_primitive(Op::Add, vec!["x", "y"]);
+/// let recorded = RecordedGraph::from_primitive(Op::Add, vec!["x", "y"])?;
 /// assert_eq!(recorded.input_keys(), &["x", "y"]);
 /// assert_eq!(recorded.output_keys().len(), 1);
+/// # Ok::<(), tidu::eager::EagerRecordError>(())
 /// ```
 pub struct RecordedGraph<Op: GraphOperation> {
     graph: Arc<Graph<Op>>,
@@ -69,49 +148,56 @@ impl<Op: GraphOperation> RecordedGraph<Op> {
     /// builder.set_outputs(y.clone());
     /// let graph = Arc::new(builder.build());
     /// let output_keys = y.iter().map(|id| graph.values()[*id].key.clone()).collect();
-    /// let recorded = RecordedGraph::new(graph, vec!["x"], output_keys);
+    /// let recorded = RecordedGraph::new(graph, vec!["x"], output_keys)?;
     ///
     /// assert_eq!(recorded.input_keys(), &["x"]);
+    /// # Ok::<(), tidu::eager::EagerRecordError>(())
     /// ```
     pub fn new(
         graph: Arc<Graph<Op>>,
         input_keys: Vec<Op::InputKey>,
         output_keys: Vec<ValueKey<Op>>,
-    ) -> Self {
-        assert_eq!(
-            graph.inputs().len(),
-            input_keys.len(),
-            "RecordedGraph expected {} input keys, got {}",
-            graph.inputs().len(),
-            input_keys.len()
-        );
-        assert_eq!(
-            graph.outputs().len(),
-            output_keys.len(),
-            "RecordedGraph expected {} output keys, got {}",
-            graph.outputs().len(),
-            output_keys.len()
-        );
-        for (&input_id, input_key) in graph.inputs().iter().zip(input_keys.iter()) {
-            assert_eq!(
-                &graph.values()[input_id].key,
-                &ValueKey::Input(input_key.clone()),
-                "RecordedGraph input key order must match graph inputs"
-            );
+    ) -> EagerRecordResult<Self> {
+        if graph.inputs().len() != input_keys.len() {
+            return Err(EagerRecordError::count_mismatch(
+                "RecordedGraph input keys",
+                graph.inputs().len(),
+                input_keys.len(),
+            ));
         }
-        for (&output_id, output_key) in graph.outputs().iter().zip(output_keys.iter()) {
-            assert_eq!(
-                &graph.values()[output_id].key,
-                output_key,
-                "RecordedGraph output key order must match graph outputs"
-            );
+        if graph.outputs().len() != output_keys.len() {
+            return Err(EagerRecordError::count_mismatch(
+                "RecordedGraph output keys",
+                graph.outputs().len(),
+                output_keys.len(),
+            ));
+        }
+        for (index, (&input_id, input_key)) in
+            graph.inputs().iter().zip(input_keys.iter()).enumerate()
+        {
+            if graph.values()[input_id].key != ValueKey::Input(input_key.clone()) {
+                return Err(EagerRecordError::key_mismatch(
+                    "RecordedGraph input keys",
+                    index,
+                ));
+            }
+        }
+        for (index, (&output_id, output_key)) in
+            graph.outputs().iter().zip(output_keys.iter()).enumerate()
+        {
+            if &graph.values()[output_id].key != output_key {
+                return Err(EagerRecordError::key_mismatch(
+                    "RecordedGraph output keys",
+                    index,
+                ));
+            }
         }
 
-        Self {
+        Ok(Self {
             graph,
             input_keys,
             output_keys,
-        }
+        })
     }
 
     /// Build a one-op recorded graph for an eager primitive invocation.
@@ -134,10 +220,11 @@ impl<Op: GraphOperation> RecordedGraph<Op> {
     ///     fn output_count(&self) -> usize { 1 }
     /// }
     ///
-    /// let recorded = RecordedGraph::from_primitive(Op::Add, vec!["x", "y"]);
+    /// let recorded = RecordedGraph::from_primitive(Op::Add, vec!["x", "y"])?;
     /// assert_eq!(recorded.as_graph().operations().len(), 1);
+    /// # Ok::<(), tidu::eager::EagerRecordError>(())
     /// ```
-    pub fn from_primitive(op: Op, input_keys: Vec<Op::InputKey>) -> Self {
+    pub fn from_primitive(op: Op, input_keys: Vec<Op::InputKey>) -> EagerRecordResult<Self> {
         let mut builder = GraphBuilder::new();
         let input_ids: Vec<_> = input_keys
             .iter()
@@ -181,25 +268,28 @@ impl<Op: Primitive> RecordedGraph<Op>
 where
     Op::InputKey: ADKey,
 {
-    pub(crate) fn try_linearize(
+    pub(crate) fn linearize(
         &self,
         output_slots: &[usize],
         ctx: &mut Op::ADContext,
     ) -> ADRuleResult<LinearizedGraph<Op>> {
-        let selected_outputs: Vec<_> = output_slots
-            .iter()
-            .map(|&slot| {
-                self.output_keys.get(slot).cloned().unwrap_or_else(|| {
-                    panic!(
-                        "RecordedGraph got output slot {slot}, but graph has {} outputs",
+        let mut selected_outputs = Vec::with_capacity(output_slots.len());
+        for &slot in output_slots {
+            let Some(output_key) = self.output_keys.get(slot).cloned() else {
+                return Err(ADRuleError::invalid_input(
+                    "tidu::eager::RecordedGraph",
+                    ADRuleKind::Jvp,
+                    format!(
+                        "requested output slot {slot}, but graph has {} outputs",
                         self.output_keys.len()
-                    )
-                })
-            })
-            .collect();
+                    ),
+                ));
+            };
+            selected_outputs.push(output_key);
+        }
         let view = resolve(vec![Arc::clone(&self.graph)]);
         let aliases = HashMap::new();
-        crate::try_linearize(&view, &selected_outputs, &self.input_keys, 0, ctx, &aliases)
+        crate::linearize(&view, &selected_outputs, &self.input_keys, 0, ctx, &aliases)
     }
 }
 
@@ -346,8 +436,8 @@ impl<K> Recorder<K> {
     ///         _primal_out: &[ValueKey<Self>],
     ///         tangent_in: &[Option<LocalValueId>],
     ///         _ctx: &mut (),
-    ///     ) -> Vec<Option<LocalValueId>> {
-    ///         vec![tangent_in[0]]
+    ///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+    ///         Ok(vec![tangent_in[0]])
     ///     }
     ///
     ///     fn transpose_rule(
@@ -357,8 +447,8 @@ impl<K> Recorder<K> {
     ///         _inputs: &[PrimitiveValue<Self>],
     ///         _role: &OperationRole,
     ///         _ctx: &mut (),
-    ///     ) -> Vec<Option<LocalValueId>> {
-    ///         vec![cotangent_out[0]]
+    ///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+    ///         Ok(vec![cotangent_out[0]])
     ///     }
     /// }
     ///
@@ -373,7 +463,7 @@ impl<K> Recorder<K> {
     ///
     /// let mut recorder = Recorder::new(Keys(0));
     /// let graph_inputs = recorder.fresh_input_keys::<Op>(1);
-    /// let graph = RecordedGraph::from_primitive(Op::Id, graph_inputs);
+    /// let graph = RecordedGraph::from_primitive(Op::Id, graph_inputs)?;
     /// let input = EagerInput {
     ///     key: ValueKey::Input(Key::User("x")),
     ///     trace: None,
@@ -386,8 +476,9 @@ impl<K> Recorder<K> {
     ///     &[input],
     ///     &[Arc::new(2.0)],
     ///     HashMap::new(),
-    /// );
+    /// )?;
     /// assert!(outputs[0].trace.is_some());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn record_graph<Op>(
         &mut self,
@@ -395,38 +486,36 @@ impl<K> Recorder<K> {
         inputs: &[EagerInput<Op>],
         outputs: &[Arc<Op::Operand>],
         retained_values: HashMap<ValueKey<Op>, Arc<Op::Operand>>,
-    ) -> Vec<EagerOutput<Op>>
+    ) -> EagerRecordResult<Vec<EagerOutput<Op>>>
     where
         Op: Primitive,
         Op::InputKey: ADKey,
         K: KeySource<Op>,
     {
-        assert_eq!(
-            inputs.len(),
-            graph.input_keys().len(),
-            "Recorder::record_graph expected {} inputs, got {}",
-            graph.input_keys().len(),
-            inputs.len()
-        );
-        assert_eq!(
-            outputs.len(),
-            graph.output_keys().len(),
-            "Recorder::record_graph expected {} outputs, got {}",
-            graph.output_keys().len(),
-            outputs.len()
-        );
-        assert!(
-            outputs.len() <= u8::MAX as usize + 1,
-            "Recorder::record_graph has too many outputs for ValueKey: {}",
-            outputs.len()
-        );
+        if inputs.len() != graph.input_keys().len() {
+            return Err(EagerRecordError::count_mismatch(
+                "Recorder::record_graph inputs",
+                graph.input_keys().len(),
+                inputs.len(),
+            ));
+        }
+        if outputs.len() != graph.output_keys().len() {
+            return Err(EagerRecordError::count_mismatch(
+                "Recorder::record_graph outputs",
+                graph.output_keys().len(),
+                outputs.len(),
+            ));
+        }
+        if outputs.len() > u8::MAX as usize + 1 {
+            return Err(EagerRecordError::too_many_outputs(outputs.len()));
+        }
 
         let output_keys = fresh_value_keys(&mut self.key_source, outputs.len());
         let requires_grad = inputs.iter().any(|input| input.requires_grad);
 
-        let trace = requires_grad.then(|| {
+        let trace = if requires_grad {
             let saved_data = saved_graph_values(&graph, inputs, &retained_values);
-            Trace::new(Arc::new(TraceNode::new(
+            Some(Trace::new(Arc::new(TraceNode::new(
                 graph,
                 output_keys.clone(),
                 saved_data,
@@ -440,10 +529,12 @@ impl<K> Recorder<K> {
                         )
                     })
                     .collect(),
-            )))
-        });
+            )?)))
+        } else {
+            None
+        };
 
-        output_keys
+        Ok(output_keys
             .into_iter()
             .enumerate()
             .map(|(output_slot, key)| EagerOutput {
@@ -452,7 +543,7 @@ impl<K> Recorder<K> {
                 requires_grad,
                 output_slot,
             })
-            .collect()
+            .collect())
     }
 }
 

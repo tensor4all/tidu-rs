@@ -1,7 +1,7 @@
 # Eager Reverse Mode
 
 This tutorial shows how a downstream eager frontend can record immediate graph
-invocations and call `tidu::eager::try_backward`.
+invocations and call `tidu::eager::backward`.
 
 The complete runnable source is `examples/eager_reverse_mode.rs`. The example
 also includes an `example_runs` test, so `cargo test --examples` exercises the
@@ -156,7 +156,7 @@ for &input_id in graph.inputs() {
 ```
 
 `run_transposed_linear` receives a `LinearizedGraph` and uses the root
-`try_linear_transpose_with_builder` helper to execute the transpose with the
+`linear_transpose_with_builder` helper to execute the transpose with the
 example builder:
 
 ```rust
@@ -166,7 +166,7 @@ let seed_ids: Vec<_> = cotangent_outputs
     .map(|seed| seed.as_ref().map(|value| builder.push_value(value.clone())))
     .collect();
 
-try_linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx)
+linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx)
 ```
 
 ## Driver
@@ -190,7 +190,7 @@ let inputs = vec![
 let outputs = record_primitive(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
 
 let mut executor = ScalarBackwardExecutor;
-let cotangents = eager::try_backward(
+let cotangents = eager::backward(
     &outputs[0].key,
     outputs[0].trace.as_ref(),
     arc(1.0),

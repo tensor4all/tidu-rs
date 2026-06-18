@@ -89,7 +89,7 @@ immediately and want to expose a reverse-mode `backward()` workflow.
 The downstream frontend records graph invocations with `tidu::eager::Recorder`
 while it runs concrete operations. A single primitive can be recorded as a
 one-operation graph, while a composite eager operation can record a larger graph
-as one tape node. Later, `tidu::eager::try_backward` walks that trace, asks the
+as one tape node. Later, `tidu::eager::backward` walks that trace, asks the
 downstream runtime to replay needed primal values, transposes graph
 linearizations, and accumulates cotangents.
 

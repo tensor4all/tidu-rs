@@ -6,14 +6,16 @@ use std::sync::Arc;
 use common::assertions::{
     assert_ctensor_approx_eq, assert_scalar_approx_eq, assert_tensor_approx_eq,
 };
-use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
+use common::{
+    evaluate, linear_transpose, linearize, tangent_input_key, tangent_output_key, ScalarKey,
+    ScalarOp,
+};
 use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
-use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
@@ -89,7 +91,7 @@ impl Primitive for ExtScalarOp {
         primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => linearize_add!(builder, ExtScalarOp::Add, tangent_in[0], tangent_in[1]),
             Self::Mul => {
@@ -132,9 +134,9 @@ impl Primitive for ExtScalarOp {
                             active_mask: vec![true],
                         },
                     );
-                    vec![Some(d_sin[0]), Some(d_cos[0])]
+                    Ok(vec![Some(d_sin[0]), Some(d_cos[0])])
                 }
-                None => vec![None, None],
+                None => Ok(vec![None, None]),
             },
         }
     }
@@ -146,10 +148,10 @@ impl Primitive for ExtScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
@@ -334,7 +336,7 @@ impl Primitive for VectorOp {
         primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => linearize_add!(builder, VectorOp::Add, tangent_in[0], tangent_in[1]),
             Self::Mul => {
@@ -358,10 +360,10 @@ impl Primitive for VectorOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
@@ -544,7 +546,7 @@ impl Primitive for ComplexVectorOp {
         primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => {
                 linearize_add!(builder, ComplexVectorOp::Add, tangent_in[0], tangent_in[1])
@@ -574,9 +576,9 @@ impl Primitive for ComplexVectorOp {
                             active_mask: vec![true],
                         },
                     );
-                    vec![Some(out[0])]
+                    Ok(vec![Some(out[0])])
                 }
-                None => vec![None],
+                None => Ok(vec![None]),
             },
             Self::BroadcastInDim { shape, dims } => match tangent_in[0] {
                 Some(dx) => {
@@ -590,9 +592,9 @@ impl Primitive for ComplexVectorOp {
                             active_mask: vec![true],
                         },
                     );
-                    vec![Some(out[0])]
+                    Ok(vec![Some(out[0])])
                 }
-                None => vec![None],
+                None => Ok(vec![None]),
             },
         }
     }
@@ -604,10 +606,10 @@ impl Primitive for ComplexVectorOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
@@ -639,7 +641,7 @@ impl Primitive for ComplexVectorOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
             Self::BroadcastInDim { shape, dims } => {
                 let axes = (0..shape.len())
@@ -655,7 +657,7 @@ impl Primitive for ComplexVectorOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
         }
     }

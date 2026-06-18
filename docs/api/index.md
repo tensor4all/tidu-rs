@@ -19,10 +19,8 @@ Important public modules and items:
 - `tidu::PrimitiveValue`
 - `tidu::ADKey`
 - `tidu::linearize`
-- `tidu::try_linearize`
 - `tidu::linear_transpose`
-- `tidu::try_linear_transpose`
-- `tidu::try_linear_transpose_with_builder`
+- `tidu::linear_transpose_with_builder`
 - `tidu::LinearizedGraph`
 - `tidu::PrimitiveGraph`
 - `tidu::eager`

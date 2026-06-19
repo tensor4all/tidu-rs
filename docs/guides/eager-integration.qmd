@@ -7,27 +7,59 @@ and want a reverse-mode `backward()` workflow.
 
 Use `Recorder` to record each eager graph invocation. A single primitive eager
 operation is represented as a one-operation `RecordedGraph`; composite eager
-operations can record a larger primitive graph as one tape node. Each input is
-described with `EagerInput`:
+operations can record a larger primitive graph as one tape node. A `Recorder` is
+created from a `KeySource`, which hands out fresh, collision-free input keys for
+the internal graphs it records (`fn fresh_input_key(&mut self) -> Op::InputKey`).
+
+Each input is described with `EagerInput`:
 
 - `key` is the user-visible value key used for cotangent accumulation.
-- `trace` points to the graph invocation that produced the value, if any.
+- `trace` points to the graph invocation that produced the value, or `None` for
+  a leaf input.
 - `requires_grad` controls whether cotangents should flow through the value.
 - `data` stores concrete primal data for later replay.
 
-`Recorder::record_graph` returns one `EagerOutput` per recorded graph output.
+`Recorder::record_graph(graph, inputs, outputs, retained_values)` returns one
+`EagerOutput` per recorded graph output. `retained_values` is a
+`HashMap<ValueKey, Arc<Operand>>` of concrete primal values to keep for the
+backward pass (typically the invocation's outputs), which reverse mode replays
+later.
 
 ## Backward Execution
 
-The downstream runtime implements `BackwardExecutor`.
+The downstream runtime implements `BackwardExecutor`. Its three methods are the
+hooks `tidu` calls during `try_backward`:
 
-`tidu` calls it to:
+```rust
+pub trait BackwardExecutor<Op: Primitive>
+where
+    Op::InputKey: ADKey,
+{
+    // Replay a primitive graph and return the concrete values transpose needs.
+    fn execute_forward(
+        &mut self,
+        graph: PrimitiveGraph<'_, Op>,
+        initial_data: &HashMap<ValueKey<Op>, Arc<Op::Operand>>,
+    ) -> HashMap<ValueKey<Op>, Arc<Op::Operand>>;
 
-- replay concrete primal values for a primitive graph,
-- run a transposed linear graph with cotangent seeds,
-- add concrete cotangents when multiple paths meet.
+    // Run a transposed linear graph with concrete cotangent seeds.
+    fn run_transposed_linear(
+        &mut self,
+        linear: &LinearizedGraph<Op>,
+        cotangent_out: &[Option<Arc<Op::Operand>>],
+        external_data: &HashMap<ValueKey<Op>, Arc<Op::Operand>>,
+        ctx: &mut Op::ADContext,
+    ) -> ADRuleResult<Vec<Option<Arc<Op::Operand>>>>;
 
-The downstream runtime still owns tensor allocation, gradient storage, device
+    // Sum two concrete cotangents where multiple paths meet.
+    fn add_operands(&mut self, a: &Arc<Op::Operand>, b: &Arc<Op::Operand>) -> Arc<Op::Operand>;
+}
+```
+
+`execute_forward` receives a `PrimitiveGraph`; call `as_graph()` to reach the
+underlying `computegraph::Graph` and iterate it (see
+[Computegraph Integration](../architecture/computegraph-integration.qmd)). The
+downstream runtime still owns tensor allocation, gradient storage, device
 selection, shape metadata, and user-facing error reporting.
 
 ## The Backward Call Sequence

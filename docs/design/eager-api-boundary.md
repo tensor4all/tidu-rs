@@ -1,5 +1,9 @@
 # Eager API Boundary
 
+> **Design note (internal record).** This page captures a design decision and may
+> describe historical or in-progress reasoning. It is not part of the user guide —
+> see Getting Started and the Guides for current usage.
+
 ## Summary
 
 `tidu` keeps a generic eager reverse-mode recording layer for downstream

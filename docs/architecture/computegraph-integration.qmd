@@ -48,3 +48,10 @@ flowchart TB
 
 `LinearizedGraph` owns its `Graph` (use `as_graph` / `into_graph` for raw access),
 while `PrimitiveGraph` borrows one for the duration of a `BackwardExecutor` call.
+
+To consume either wrapper, call `as_graph()` and use the `computegraph::Graph`
+query methods: `inputs()` and `outputs()` give graph-local value ids,
+`values()[id].key` maps an id to its `ValueKey`, and `operations()` yields the
+operation nodes (each with `inputs` of `ValueRef::Local` / `ValueRef::External`,
+an `operation`, and `outputs`). A `BackwardExecutor::execute_forward`
+implementation walks exactly these to replay a graph.

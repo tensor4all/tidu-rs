@@ -14,10 +14,10 @@ The name `tidu` comes from the Chinese word 梯度, whose pinyin romanization is
 
 ## Where To Start
 
-- Start with [How tidu Works](architecture/overview.qmd) for the whole-system
+- New to the graph-transform vocabulary? Read
+  [Terminology](getting-started/terminology.md) first.
+- Then read [How tidu Works](architecture/overview.qmd) for the whole-system
   picture: the layers, the transform pipeline, and the primitive contract.
-- Read [Terminology](getting-started/terminology.md) if the graph transform
-  vocabulary is new.
 - Work through [Primitive Linearization](tutorials/primitive-linearization.md)
   to define a tiny primitive set and run graph transforms.
 - Work through [Eager Reverse Mode](tutorials/eager-reverse-mode.md) to connect

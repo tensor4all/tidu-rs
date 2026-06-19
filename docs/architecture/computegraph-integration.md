@@ -23,3 +23,28 @@ references are represented as external graph values at the storage layer.
 Downstream runtimes can use `as_graph()` or `into_graph()` when compiling,
 materializing, or merging transform results with their existing graph execution
 pipeline.
+
+## Public Wrappers
+
+`tidu` exposes two wrappers over the lower-level `computegraph::Graph`. Most code
+uses the wrappers; only advanced runtimes reach the raw graph.
+
+```mermaid
+flowchart TB
+  subgraph TIDU["tidu public wrappers"]
+    LG["LinearizedGraph&lt;Op&gt;<br/>as_graph() · into_graph()<br/>tangent_inputs() · tangent_outputs()"]
+    PG["PrimitiveGraph&lt;'a, Op&gt;<br/>as_graph()"]
+  end
+  subgraph CG["computegraph"]
+    G["Graph&lt;Op&gt;<br/>values() · operations() · inputs() · outputs()"]
+    VK["ValueKey: Input(InputKey) or Derived { operation, output_slot }"]
+    LV["LocalValueId = usize"]
+  end
+  LG -->|owns| G
+  PG -->|borrows| G
+  G --- VK
+  G --- LV
+```
+
+`LinearizedGraph` owns its `Graph` (use `as_graph` / `into_graph` for raw access),
+while `PrimitiveGraph` borrows one for the duration of a `BackwardExecutor` call.

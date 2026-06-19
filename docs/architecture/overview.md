@@ -1,0 +1,81 @@
+# How tidu Works
+
+`tidu` builds automatic-differentiation transforms for primitive computation
+graphs. It owns the AD transform contracts and delegates the operation set, the
+local AD rules, concrete execution, and the user-facing tensor API to downstream
+crates.
+
+## Layers
+
+```mermaid
+flowchart TB
+  subgraph DS["Downstream crate(s)"]
+    direction LR
+    RULES["Primitive set + AD rules<br/>jvp_rule · transpose_rule · add"]
+    RT["BackwardExecutor · runtime · tensor API"]
+  end
+  subgraph TD["tidu — AD engine"]
+    direction LR
+    TR["linearize · linear_transpose · eager::try_backward"]
+    CON["rules contract<br/>Primitive · PrimitiveBuilder · PrimitiveValue · ADKey"]
+  end
+  CG["computegraph<br/>Graph · ValueKey · LocalValueId · OperationRole · resolve"]
+  DS -->|implements| CON
+  RULES --> TR
+  RT --> TR
+  TD --> CG
+```
+
+`tidu` sits between a downstream primitive set and a downstream runtime, and
+stores its graphs using `computegraph`.
+
+## Transform Pipeline
+
+```mermaid
+flowchart LR
+  SRC["Primal graph<br/>computegraph::Graph"]
+  JVP["LinearizedGraph (JVP)<br/>tangent inputs → tangent outputs"]
+  VJP["Transposed LinearizedGraph (VJP)<br/>cotangent seeds → input cotangents"]
+  SRC -->|"linearize() / try_linearize()<br/>calls Primitive::jvp_rule()"| JVP
+  JVP -->|"linear_transpose() / try_linear_transpose()<br/>calls transpose_rule(); emits add() to accumulate"| VJP
+```
+
+`linearize` asks each primitive for its JVP rule and produces a `LinearizedGraph`
+whose inputs and outputs are tangents. `linear_transpose` walks that graph
+backward, asks each primitive for its transpose rule, and emits `add` nodes to
+accumulate cotangents, producing a transposed graph from cotangent seeds to input
+cotangents.
+
+## The Primitive Contract
+
+Downstream operations implement `Primitive`; tidu calls their rules during the
+transforms, passing a `PrimitiveBuilder` the rule uses to emit new operations.
+
+```mermaid
+flowchart TB
+  subgraph DOWN["Downstream — impl Primitive for Op"]
+    J["jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx)"]
+    T["transpose_rule(builder, cotangent_outputs, inputs, role, ctx)"]
+    A["add() · try_jvp_rule · try_linear_transpose_rule"]
+  end
+  subgraph TIDU["tidu transforms"]
+    L["linearize / linear_transpose"]
+    B["PrimitiveBuilder&lt;Op&gt;::add_primitive(op, inputs, role)"]
+  end
+  L -->|"calls rules, passing builder"| J
+  L --> T
+  J -->|emits ops| B
+  T -->|emits ops| B
+  B -->|"returns Vec&lt;LocalValueId&gt;"| L
+```
+
+## Where To Go Next
+
+- [Implementing Primitives](../guides/implementing-primitives.md) — the rule
+  contract in detail, including the value reference model and operation roles.
+- [Linearize and Transpose](../guides/linearize-and-transpose.md) — the graph
+  transforms and cotangent accumulation.
+- [Eager Integration](../guides/eager-integration.md) — connecting immediate
+  execution to `backward()`.
+- [Computegraph Integration](computegraph-integration.md) — the lower-level
+  storage wrappers.

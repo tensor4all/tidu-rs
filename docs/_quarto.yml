@@ -47,6 +47,8 @@ website:
             href: guides/higher-order-ad.md
       - section: "Architecture"
         contents:
+          - text: "How tidu Works"
+            href: architecture/overview.md
           - text: "Architecture"
             href: architecture/index.md
           - text: "Public Boundaries"

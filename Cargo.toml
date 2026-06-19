@@ -2,6 +2,7 @@
 name = "tidu"
 version = "0.1.0"
 edition = "2021"
+authors = ["Hiroshi Shinaoka <h.shinaoka@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "Automatic-differentiation transforms (linearize, transpose, eager reverse-mode) for primitive computation graphs."
 repository = "https://github.com/tensor4all/tidu-rs"

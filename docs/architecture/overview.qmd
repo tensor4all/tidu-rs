@@ -7,7 +7,7 @@ crates.
 
 ## Layers
 
-```mermaid
+```{mermaid}
 flowchart TB
   subgraph DS["Downstream crate(s)"]
     direction LR
@@ -31,7 +31,7 @@ stores its graphs using `computegraph`.
 
 ## Transform Pipeline
 
-```mermaid
+```{mermaid}
 flowchart LR
   SRC["Primal graph<br/>computegraph::Graph"]
   JVP["LinearizedGraph (JVP)<br/>tangent inputs → tangent outputs"]
@@ -51,7 +51,7 @@ cotangents.
 Downstream operations implement `Primitive`; tidu calls their rules during the
 transforms, passing a `PrimitiveBuilder` the rule uses to emit new operations.
 
-```mermaid
+```{mermaid}
 flowchart TB
   subgraph DOWN["Downstream — impl Primitive for Op"]
     J["jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx)"]
@@ -71,11 +71,11 @@ flowchart TB
 
 ## Where To Go Next
 
-- [Implementing Primitives](../guides/implementing-primitives.md) — the rule
+- [Implementing Primitives](../guides/implementing-primitives.qmd) — the rule
   contract in detail, including the value reference model and operation roles.
 - [Linearize and Transpose](../guides/linearize-and-transpose.md) — the graph
   transforms and cotangent accumulation.
-- [Eager Integration](../guides/eager-integration.md) — connecting immediate
+- [Eager Integration](../guides/eager-integration.qmd) — connecting immediate
   execution to `backward()`.
-- [Computegraph Integration](computegraph-integration.md) — the lower-level
+- [Computegraph Integration](computegraph-integration.qmd) — the lower-level
   storage wrappers.

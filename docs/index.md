@@ -14,7 +14,7 @@ The name `tidu` comes from the Chinese word 梯度, whose pinyin romanization is
 
 ## Where To Start
 
-- Start with [How tidu Works](architecture/overview.md) for the whole-system
+- Start with [How tidu Works](architecture/overview.qmd) for the whole-system
   picture: the layers, the transform pipeline, and the primitive contract.
 - Read [Terminology](getting-started/terminology.md) if the graph transform
   vocabulary is new.
@@ -22,8 +22,8 @@ The name `tidu` comes from the Chinese word 梯度, whose pinyin romanization is
   to define a tiny primitive set and run graph transforms.
 - Work through [Eager Reverse Mode](tutorials/eager-reverse-mode.md) to connect
   immediate execution to `backward()`.
-- Use the [Guides](guides/implementing-primitives.md) when implementing a real
-  downstream primitive set; the [Eager Integration](guides/eager-integration.md)
+- Use the [Guides](guides/implementing-primitives.qmd) when implementing a real
+  downstream primitive set; the [Eager Integration](guides/eager-integration.qmd)
   guide covers the `backward()` workflow. The public API lives in the
   `tidu::rules` and `tidu::eager` modules.
 

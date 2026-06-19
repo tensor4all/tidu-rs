@@ -34,7 +34,7 @@ selection, shape metadata, and user-facing error reporting.
 
 The sequence below runs from recording an invocation to producing cotangents.
 
-```mermaid
+```{mermaid}
 sequenceDiagram
   participant DS as Downstream frontend
   participant R as Recorder

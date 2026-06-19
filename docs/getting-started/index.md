@@ -10,3 +10,7 @@ For the big picture first, see [How tidu Works](../architecture/overview.qmd).
 
 The examples define a small scalar primitive set locally so they can be read as
 complete downstream integrations.
+
+When you implement your own primitive set, the
+[Guides](../guides/implementing-primitives.qmd) cover the rule contract, the
+linearize/transpose transforms, and eager integration in depth.

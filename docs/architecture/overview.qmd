@@ -5,6 +5,9 @@ graphs. It owns the AD transform contracts and delegates the operation set, the
 local AD rules, concrete execution, and the user-facing tensor API to downstream
 crates.
 
+New to AD vocabulary like JVP, VJP, tangent, or cotangent? Read
+[Terminology](../getting-started/terminology.md) first — this page assumes it.
+
 ## Layers
 
 ```{mermaid}

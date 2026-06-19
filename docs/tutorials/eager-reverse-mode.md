@@ -171,9 +171,13 @@ try_linear_transpose_with_builder(linear, &mut builder, &seed_ids, ctx)
 
 ## Driver
 
-The driver records the eager multiply `x * x` as a one-operation
-`RecordedGraph`, then asks `tidu` to propagate an output cotangent of `1` back
-to `x`:
+The *driver* is the example's top-level routine (`run()`, called by `main()` and
+the `example_runs` test) that wires the pieces together and runs them. Here it
+records the eager multiply `x * x` as a one-operation `RecordedGraph`, then asks
+`tidu` to propagate an output cotangent of `1` back to `x`. `record_primitive`,
+`eager_input`, and `arc` are small helpers defined in the example —
+`record_primitive` just builds a one-op `RecordedGraph` and calls the real API
+`Recorder::record_graph`:
 
 ```rust
 let mut recorder = Recorder::new(ExampleKeySource::default());

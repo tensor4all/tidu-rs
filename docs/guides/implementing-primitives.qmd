@@ -41,6 +41,10 @@ avoid emitting work for inactive inputs.
 Transpose rules receive optional output cotangents. If an output cotangent is
 `None`, no cotangent flows through that output slot.
 
+JVP rules also receive `primal_outputs`: a rule whose derivative depends on the
+output reuses it instead of recomputing. For example, `exp`'s JVP is
+`d(exp x) = exp(x) · dx`, so the rule references the primal output directly.
+
 ## Value Reference Model
 
 AD rules describe new graph structure with two value kinds; choosing the right

@@ -12,6 +12,15 @@ The returned graph has tangent inputs for the selected primal inputs and tangent
 outputs for the selected primal outputs. Use `try_linearize` when primitive
 rules can fail.
 
+`DiffPassId` is a `u64` that tags one linearization pass; it is woven into the
+tangent input keys (via `ADKey::tangent_of`) so repeated transforms do not
+collide. Pass a fresh value per `linearize` call (see Repeated Transforms).
+
+The input-aliases map (`HashMap<InputKey, ValueKey>`) is empty in the common
+case. A non-empty entry says "treat this graph input as identical to that
+existing value," so the input inherits the aliased value's tangent instead of
+being an independent leaf — used for checkpointing and shared sub-graphs.
+
 ## Linear Transpose
 
 `linear_transpose` takes a `LinearizedGraph` and returns another

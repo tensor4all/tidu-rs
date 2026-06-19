@@ -21,3 +21,6 @@ start with the downstream tensor/runtime crate that uses tidu.
 ## Documentation
 
 Hosted documentation: <https://tensor4all.org/tidu-rs/>
+
+Start with [How tidu Works](docs/architecture/overview.md) for the architecture
+at a glance.

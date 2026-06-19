@@ -57,7 +57,7 @@ outputs, which later calls feed back in as `Local(...)`.
 
 A `ValueKey` is how a value keeps its identity across graph boundaries:
 
-```mermaid
+```{mermaid}
 flowchart LR
   VK["ValueKey&lt;Op&gt;"] --> I["Input(Op::InputKey)<br/>a graph input"]
   VK --> D["Derived { operation, output_slot }<br/>one output slot of an operation"]
@@ -72,7 +72,7 @@ builds from it.
 Every operation tidu emits carries an `OperationRole`, and `transpose_rule`
 receives the role of the operation it is transposing.
 
-```mermaid
+```{mermaid}
 flowchart LR
   OR["OperationRole"] --> P["Primary<br/>primal operation"]
   OR --> L["Linearized { active_mask }<br/>tangent / transpose operation"]

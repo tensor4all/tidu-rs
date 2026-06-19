@@ -1,6 +1,6 @@
 # Architecture
 
-> See [How tidu Works](overview.md) for diagrams of the layers, the transform
+> See [How tidu Works](overview.qmd) for diagrams of the layers, the transform
 > pipeline, and the primitive contract.
 
 `tidu` sits between downstream primitive sets and graph runtimes.

@@ -29,7 +29,7 @@ pipeline.
 `tidu` exposes two wrappers over the lower-level `computegraph::Graph`. Most code
 uses the wrappers; only advanced runtimes reach the raw graph.
 
-```mermaid
+```{mermaid}
 flowchart TB
   subgraph TIDU["tidu public wrappers"]
     LG["LinearizedGraph&lt;Op&gt;<br/>as_graph() · into_graph()<br/>tangent_inputs() · tangent_outputs()"]

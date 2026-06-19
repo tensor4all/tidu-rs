@@ -2,7 +2,7 @@
 
 Start with the vocabulary, then run one of the examples.
 
-For the big picture first, see [How tidu Works](../architecture/overview.md).
+For the big picture first, see [How tidu Works](../architecture/overview.qmd).
 
 1. Read [Terminology](terminology.md).
 2. Run `cargo run --example primitive_linearization`.

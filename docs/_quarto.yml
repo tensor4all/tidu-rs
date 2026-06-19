@@ -6,7 +6,9 @@ project:
     - getting-started/*.md
     - tutorials/*.md
     - guides/*.md
+    - guides/*.qmd
     - architecture/*.md
+    - architecture/*.qmd
     - api/*.md
     - internals/*.md
     - design/*.md
@@ -36,11 +38,11 @@ website:
       - section: "Guides"
         contents:
           - text: "Implementing Primitives"
-            href: guides/implementing-primitives.md
+            href: guides/implementing-primitives.qmd
           - text: "Linearize And Transpose"
             href: guides/linearize-and-transpose.md
           - text: "Eager Integration"
-            href: guides/eager-integration.md
+            href: guides/eager-integration.qmd
           - text: "Complex AD"
             href: guides/complex-ad.md
           - text: "Higher-Order AD"
@@ -48,13 +50,13 @@ website:
       - section: "Architecture"
         contents:
           - text: "How tidu Works"
-            href: architecture/overview.md
+            href: architecture/overview.qmd
           - text: "Architecture"
             href: architecture/index.md
           - text: "Public Boundaries"
             href: architecture/public-boundaries.md
           - text: "Computegraph Integration"
-            href: architecture/computegraph-integration.md
+            href: architecture/computegraph-integration.qmd
       - section: "API"
         contents:
           - text: "API Map"

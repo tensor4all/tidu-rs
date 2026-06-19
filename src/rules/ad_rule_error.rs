@@ -99,7 +99,7 @@ impl fmt::Display for ADRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported { op, rule } => {
-                write!(f, "unsupported {} AD rule for {op}", rule.as_str())
+                write!(f, "unsupported {} AD rule for {}", rule.as_str(), op)
             }
         }
     }

@@ -77,8 +77,9 @@ where
             executor.run_transposed_linear(&linear, &active_cotangent_out, &all_values, ctx)?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in) {
-            let Some(cotangent) = maybe_cotangent else {
-                continue;
+            let cotangent = match maybe_cotangent {
+                Some(cotangent) => cotangent,
+                None => continue,
             };
             if !edge.requires_grad {
                 continue;

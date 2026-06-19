@@ -191,7 +191,8 @@ where
             .map(|&slot| {
                 self.output_keys.get(slot).cloned().unwrap_or_else(|| {
                     panic!(
-                        "RecordedGraph got output slot {slot}, but graph has {} outputs",
+                        "RecordedGraph got output slot {}, but graph has {} outputs",
+                        slot,
                         self.output_keys.len()
                     )
                 })

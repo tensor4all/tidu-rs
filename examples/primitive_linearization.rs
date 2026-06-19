@@ -155,8 +155,9 @@ impl Primitive for ScalarOp {
         role: &OperationRole,
         _ctx: &mut (),
     ) -> Vec<Option<LocalValueId>> {
-        let Some(ct) = cotangent_outputs[0] else {
-            return vec![None; self.input_count()];
+        let ct = match cotangent_outputs[0] {
+            Some(ct) => ct,
+            None => return vec![None; self.input_count()],
         };
 
         match self {

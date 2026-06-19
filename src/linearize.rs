@@ -41,7 +41,7 @@ where
 {
     match try_linearize(view, outputs, wrt, pass, ctx, aliases) {
         Ok(linear) => linear,
-        Err(err) => panic!("{err}"),
+        Err(err) => panic!("{}", err),
     }
 }
 
@@ -79,8 +79,9 @@ where
             continue;
         }
 
-        let Some(val_def) = view.resolve_value(&key) else {
-            continue;
+        let val_def = match view.resolve_value(&key) {
+            Some(val_def) => val_def,
+            None => continue,
         };
 
         match val_def {

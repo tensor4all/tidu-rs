@@ -20,6 +20,48 @@ A primitive operation must first implement `computegraph::GraphOperation`:
 - `try_jvp_rule()` and `try_linear_transpose_rule()` can report missing rules
   with `ADRuleError`.
 
+The trait the rules implement (the `try_` variants default to these):
+
+```rust
+pub trait Primitive: GraphOperation
+where
+    Self::InputKey: ADKey,
+{
+    type ADContext: Default;
+
+    fn add() -> Self;
+
+    fn jvp_rule(
+        &self,
+        builder: &mut impl PrimitiveBuilder<Self>,
+        primal_inputs: &[ValueKey<Self>],
+        primal_outputs: &[ValueKey<Self>],
+        tangent_inputs: &[Option<LocalValueId>],
+        ctx: &mut Self::ADContext,
+    ) -> Vec<Option<LocalValueId>>;
+
+    fn transpose_rule(
+        &self,
+        builder: &mut impl PrimitiveBuilder<Self>,
+        cotangent_outputs: &[Option<LocalValueId>],
+        inputs: &[PrimitiveValue<Self>],
+        role: &OperationRole,
+        ctx: &mut Self::ADContext,
+    ) -> Vec<Option<LocalValueId>>;
+}
+```
+
+Rules emit new operations through the builder:
+
+```rust
+fn add_primitive(
+    &mut self,
+    op: Op,
+    inputs: Vec<PrimitiveValue<Op>>,
+    role: OperationRole,
+) -> Vec<LocalValueId>;
+```
+
 ## Rule Closure
 
 Rules emit primitive applications through `PrimitiveBuilder`. Every operation

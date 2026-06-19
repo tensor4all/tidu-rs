@@ -18,6 +18,27 @@ cargo run --example primitive_linearization
 
 <!-- snippet-source: examples/primitive_linearization.rs -->
 
+## Imports
+
+The example pulls graph plumbing from `computegraph` and the AD transforms from
+`tidu`:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use computegraph::compile::compile;
+use computegraph::graph::{Graph, GraphBuilder};
+use computegraph::materialize::materialize_merge;
+use computegraph::resolve::resolve;
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
+use tidu::{
+    linear_transpose, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive,
+    PrimitiveBuilder, PrimitiveValue,
+};
+```
+
 ## Primitive Set
 
 A downstream crate supplies the primitive operations. This tutorial uses scalar
@@ -178,6 +199,31 @@ let ordered_refs: Vec<_> = ordered_inputs.iter().collect();
 let program = compile(&graph);
 program.eval(&mut (), &ordered_refs)
 ```
+
+## Building the Graph
+
+Downstream graphs are assembled with `computegraph::GraphBuilder`: add inputs,
+add operations (each wired from earlier values via `ValueRef`), record the
+global key of the output you want, and set the graph outputs.
+
+```rust
+fn build_x_squared() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
+    let x = builder.add_input(sk("x"));
+    let y = builder.add_operation(
+        ScalarOp::Mul,
+        vec![ValueRef::Local(x), ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    let y_key = builder.global_key(y[0]).clone();
+    builder.set_outputs(vec![y[0]]);
+    (Arc::new(builder.build()), y_key)
+}
+```
+
+For a function of several inputs, add each input and chain operations the same
+way. See `examples/gradient_two_inputs.rs` for `f(x, y) = x * y + x`, which also
+shows cotangent accumulation (an input feeding two operations).
 
 ## Driver
 

@@ -1,9 +1,15 @@
 [package]
 name = "tidu"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.65"
+authors = ["Hiroshi Shinaoka <h.shinaoka@gmail.com>"]
 license = "MIT OR Apache-2.0"
-publish = false
+description = "Automatic-differentiation transforms (linearize, transpose, eager reverse-mode) for primitive computation graphs."
+repository = "https://github.com/tensor4all/tidu-rs"
+readme = "README.md"
+keywords = ["autodiff", "gradient", "jvp", "vjp", "computation-graph"]
+categories = ["mathematics", "science"]
 
 [workspace]
 
@@ -11,7 +17,7 @@ publish = false
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [dependencies]
-computegraph = { git = "https://github.com/tensor4all/computegraph-rs.git", rev = "691def2d82fd4367b397d61209449f68e82050b7" }
+computegraph = "0.1.0"
 
 [dev-dependencies]
 ndarray = "0.16"

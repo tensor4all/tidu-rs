@@ -300,8 +300,9 @@ impl Primitive for TwoOutputOp {
                 (None, None) => Ok(vec![None]),
             },
             Self::Split => {
-                let Some(dx) = tangent_in[0] else {
-                    return Ok(vec![None, None]);
+                let dx = match tangent_in[0] {
+                    Some(dx) => dx,
+                    None => return Ok(vec![None, None]),
                 };
                 let doubled = builder.add_primitive(
                     Self::Add,

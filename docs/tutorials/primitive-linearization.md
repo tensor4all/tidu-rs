@@ -18,6 +18,27 @@ cargo run --example primitive_linearization
 
 <!-- snippet-source: examples/primitive_linearization.rs -->
 
+## Imports
+
+The example pulls graph plumbing from `computegraph` and the AD transforms from
+`tidu`:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use computegraph::compile::compile;
+use computegraph::graph::{Graph, GraphBuilder};
+use computegraph::materialize::materialize_merge;
+use computegraph::resolve::resolve;
+use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
+use computegraph::{EvaluableGraphOperation, GraphOperation};
+use tidu::{
+    linear_transpose, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive,
+    PrimitiveBuilder, PrimitiveValue,
+};
+```
+
 ## Primitive Set
 
 A downstream crate supplies the primitive operations. This tutorial uses scalar
@@ -70,7 +91,11 @@ impl ADKey for ScalarKey {
 rules. The rule methods receive primal values, tangent or cotangent slots, and
 a `PrimitiveBuilder` for appending primitive applications to the transformed
 graph. `LocalValueId` is the graph-local identifier returned by that builder for
-a newly produced value.
+a newly produced value. See
+[Implementing Primitives](../guides/implementing-primitives.qmd) for the full
+contract behind `PrimitiveBuilder`, `PrimitiveValue`, and `OperationRole`.
+(`sum_tangent_terms` below is a small helper defined in the example, not a
+`tidu` API.)
 
 For addition, the JVP is just the sum of active tangent inputs. For
 multiplication, the rule emits `dx * y` when the left input is active and
@@ -152,7 +177,10 @@ fn transpose_mul(
 The example includes a small evaluator so the tutorial can assert numerical
 results. It resolves the source graph plus the transformed graph, materializes
 the requested outputs, compiles the result, and feeds concrete scalar inputs.
-The key steps are:
+
+`resolve`, `materialize_merge`, `compile`, and `program.eval` are `computegraph`
+APIs, not `tidu` ones: `tidu` stores the graphs it builds in `computegraph`, and
+you execute them with `computegraph`. The key steps are:
 
 ```rust
 let view = resolve(roots);
@@ -172,10 +200,37 @@ let program = compile(&graph);
 program.eval(&mut (), &ordered_refs)
 ```
 
+## Building the Graph
+
+Downstream graphs are assembled with `computegraph::GraphBuilder`: add inputs,
+add operations (each wired from earlier values via `ValueRef`), record the
+global key of the output you want, and set the graph outputs.
+
+```rust
+fn build_x_squared() -> (Arc<Graph<ScalarOp>>, ValueKey<ScalarOp>) {
+    let mut builder = GraphBuilder::<ScalarOp>::new();
+    let x = builder.add_input(sk("x"));
+    let y = builder.add_operation(
+        ScalarOp::Mul,
+        vec![ValueRef::Local(x), ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    let y_key = builder.global_key(y[0]).clone();
+    builder.set_outputs(vec![y[0]]);
+    (Arc::new(builder.build()), y_key)
+}
+```
+
+For a function of several inputs, add each input and chain operations the same
+way. See `examples/gradient_two_inputs.rs` for `f(x, y) = x * y + x`, which also
+shows cotangent accumulation (an input feeding two operations).
+
 ## Driver
 
-The driver builds `x * x`, linearizes it with respect to `x`, and then
-transposes the linearized graph:
+The *driver* is the example's top-level routine (`run()`, called by `main()` and
+the `example_runs` test) that wires the pieces together and runs them. It builds
+`x * x`, linearizes it with respect to `x`, and then transposes the linearized
+graph:
 
 ```rust
 let (primal, y_key) = build_x_squared();

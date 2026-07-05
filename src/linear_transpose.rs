@@ -35,8 +35,9 @@ where
     let graph = linear.as_graph();
 
     for (index, maybe_tangent_output) in linear.tangent_outputs().iter().enumerate() {
-        let Some(tangent_output_id) = maybe_tangent_output else {
-            continue;
+        let tangent_output_id = match maybe_tangent_output {
+            Some(tangent_output_id) => tangent_output_id,
+            None => continue,
         };
 
         let source_key = graph.values()[*tangent_output_id].key.clone();
@@ -88,8 +89,9 @@ where
         }
 
         for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
-            let Some(cotangent_id) = maybe_cotangent else {
-                continue;
+            let cotangent_id = match maybe_cotangent {
+                Some(cotangent_id) => cotangent_id,
+                None => continue,
             };
             let input_key = match input {
                 PrimitiveValue::Local(_) => {
@@ -203,8 +205,9 @@ where
         }
 
         for (input, maybe_cotangent) in rule_inputs.iter().zip(cotangent_in) {
-            let Some(cotangent_id) = maybe_cotangent else {
-                continue;
+            let cotangent_id = match maybe_cotangent {
+                Some(cotangent_id) => cotangent_id,
+                None => continue,
             };
             let input_key = match input {
                 PrimitiveValue::Local(_) => {

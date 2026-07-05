@@ -26,7 +26,7 @@ use crate::LinearizedGraph;
 /// let aliases = std::collections::HashMap::new();
 /// let linear = linearize(&view, &[output_key], &[input_key], 1, &mut ctx, &aliases)?;
 /// assert_eq!(linear.tangent_outputs().len(), 1);
-/// # Ok::<(), crate::ADRuleError>(())
+/// # Ok::<(), tidu::ADRuleError>(())
 /// ```
 pub fn linearize<Op: Primitive>(
     view: &ResolvedView<Op>,
@@ -57,8 +57,9 @@ where
             continue;
         }
 
-        let Some(val_def) = view.resolve_value(&key) else {
-            continue;
+        let val_def = match view.resolve_value(&key) {
+            Some(val_def) => val_def,
+            None => continue,
         };
 
         match val_def {
@@ -105,7 +106,7 @@ where
                 )?;
                 if tangent_out.len() != output_keys.len() {
                     return Err(ADRuleError::invalid_input(
-                        format!("{operation:?}"),
+                        format!("{:?}", operation),
                         ADRuleKind::Jvp,
                         format!(
                             "rule returned {} tangents for {} outputs",

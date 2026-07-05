@@ -136,7 +136,7 @@ impl fmt::Display for ADRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported { op, rule } => {
-                write!(f, "unsupported {} AD rule for {op}", rule.as_str())
+                write!(f, "unsupported {} AD rule for {}", rule.as_str(), op)
             }
             Self::InvalidInput { op, rule, message } => {
                 write!(f, "invalid {} AD input for {op}: {message}", rule.as_str())

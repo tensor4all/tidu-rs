@@ -1,0 +1,57 @@
+# Computegraph Integration
+
+This page names lower-level graph storage terms for implementers who need them.
+They are not required terminology for the getting-started path.
+
+`tidu` stores graph transform results using `computegraph` data structures. The
+important public wrappers are `LinearizedGraph` and `PrimitiveGraph`, but
+advanced runtimes may need raw access.
+
+## Storage Terms
+
+- `Graph` is the lower-level graph container.
+- `LocalValueId` identifies a value within one graph container.
+- `ValueKey` identifies an input or derived value across graph boundaries.
+- `ValueRef` represents an operation input, either local or external.
+- `OperationRole` marks primal operations and linear operations.
+
+## Why These Appear
+
+Graph transforms often need to reference primal values from a linear rule. Those
+references are represented as external graph values at the storage layer.
+
+Downstream runtimes can use `as_graph()` or `into_graph()` when compiling,
+materializing, or merging transform results with their existing graph execution
+pipeline.
+
+## Public Wrappers
+
+`tidu` exposes two wrappers over the lower-level `computegraph::Graph`. Most code
+uses the wrappers; only advanced runtimes reach the raw graph.
+
+```{mermaid}
+flowchart TB
+  subgraph TIDU["tidu public wrappers"]
+    LG["LinearizedGraph&lt;Op&gt;<br/>as_graph() · into_graph()<br/>tangent_inputs() · tangent_outputs()"]
+    PG["PrimitiveGraph&lt;'a, Op&gt;<br/>as_graph()"]
+  end
+  subgraph CG["computegraph"]
+    G["Graph&lt;Op&gt;<br/>values() · operations() · inputs() · outputs()"]
+    VK["ValueKey: Input(InputKey) or Derived { operation, output_slot }"]
+    LV["LocalValueId = usize"]
+  end
+  LG -->|owns| G
+  PG -->|borrows| G
+  G --- VK
+  G --- LV
+```
+
+`LinearizedGraph` owns its `Graph` (use `as_graph` / `into_graph` for raw access),
+while `PrimitiveGraph` borrows one for the duration of a `BackwardExecutor` call.
+
+To consume either wrapper, call `as_graph()` and use the `computegraph::Graph`
+query methods: `inputs()` and `outputs()` give graph-local value ids,
+`values()[id].key` maps an id to its `ValueKey`, and `operations()` yields the
+operation nodes (each with `inputs` of `ValueRef::Local` / `ValueRef::External`,
+an `operation`, and `outputs`). A `BackwardExecutor::execute_forward`
+implementation walks exactly these to replay a graph.

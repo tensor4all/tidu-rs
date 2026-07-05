@@ -279,15 +279,19 @@ where
     ) -> ADRuleResult<LinearizedGraph<Op>> {
         let mut selected_outputs = Vec::with_capacity(output_slots.len());
         for &slot in output_slots {
-            let Some(output_key) = self.output_keys.get(slot).cloned() else {
-                return Err(ADRuleError::invalid_input(
-                    "tidu::eager::RecordedGraph",
-                    ADRuleKind::Jvp,
-                    format!(
-                        "requested output slot {slot}, but graph has {} outputs",
-                        self.output_keys.len()
-                    ),
-                ));
+            let output_key = match self.output_keys.get(slot).cloned() {
+                Some(output_key) => output_key,
+                None => {
+                    return Err(ADRuleError::invalid_input(
+                        "tidu::eager::RecordedGraph",
+                        ADRuleKind::Jvp,
+                        format!(
+                            "requested output slot {}, but graph has {} outputs",
+                            slot,
+                            self.output_keys.len()
+                        ),
+                    ));
+                }
             };
             selected_outputs.push(output_key);
         }

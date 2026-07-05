@@ -71,8 +71,9 @@ impl Primitive for Op {
             Op::Missing => Err(ADRuleError::unsupported("Op::Missing", ADRuleKind::Jvp)),
             Op::WrongJvp => Ok(vec![]),
             Op::EmitMissing | Op::EmitWrongTranspose => {
-                let Some(dx) = tangent_in[0] else {
-                    return Ok(vec![None]);
+                let dx = match tangent_in[0] {
+                    Some(dx) => dx,
+                    None => return Ok(vec![None]),
                 };
                 let emitted = match self {
                     Op::EmitMissing => Op::Missing,

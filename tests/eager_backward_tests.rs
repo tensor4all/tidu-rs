@@ -6,7 +6,8 @@ use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::eager::{
-    self, BackwardExecutor, EagerInput, EagerOutput, KeySource, RecordedGraph, Recorder,
+    self, BackwardExecutor, EagerInput, EagerOutput, ForwardExecutor, KeySource, RecordedGraph,
+    Recorder,
 };
 use tidu::{
     linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
@@ -649,6 +650,57 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
     }
 }
 
+struct ScalarForwardCallbacks;
+
+impl ForwardExecutor<ScalarOp> for ScalarForwardCallbacks {
+    fn run_linearized_forward(
+        &mut self,
+        linear: &LinearizedGraph<ScalarOp>,
+        tangent_in: &[(ScalarKey, Option<Arc<f64>>)],
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+        _ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
+        let mut builder = ScalarEagerBuilder::new(external_data.clone());
+        let tangent_by_key: HashMap<ScalarKey, Arc<f64>> = tangent_in
+            .iter()
+            .filter_map(|(key, maybe_tangent)| {
+                maybe_tangent
+                    .as_ref()
+                    .map(|tangent| (key.clone(), tangent.clone()))
+            })
+            .collect();
+        for (key, local_id) in linear.tangent_inputs() {
+            let value = tangent_by_key.get(key).cloned().unwrap_or_else(|| arc(0.0));
+            let pushed = builder.push_value(value);
+            assert_eq!(*local_id, pushed);
+        }
+
+        for op_node in linear.as_graph().operations() {
+            let inputs = op_node
+                .inputs
+                .iter()
+                .map(|input| match input {
+                    ValueRef::Local(local_id) => PrimitiveValue::Local(*local_id),
+                    ValueRef::External(key) => PrimitiveValue::External(key.clone()),
+                })
+                .collect();
+            let output_ids =
+                builder.add_primitive(op_node.operation.clone(), inputs, op_node.role.clone());
+            assert_eq!(output_ids, op_node.outputs);
+        }
+
+        Ok(linear
+            .tangent_outputs()
+            .iter()
+            .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
+            .collect())
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        Arc::new(**a + **b)
+    }
+}
+
 #[test]
 fn try_linear_transpose_with_builder_propagates_add_cotangents() {
     let mut builder = GraphBuilder::<ScalarOp>::new();
@@ -807,6 +859,84 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
     assert_eq!(callbacks.observed_graph_outputs, 1);
     assert_eq!(callbacks.observed_seed_slots, 1);
     assert_eq!(**cotangents.get(&grad_key).expect("gradient for x"), 2.0);
+}
+
+#[test]
+fn try_forward_accumulates_x_squared_tangent() {
+    let x_key = ValueKey::Input(sk("x"));
+    let inputs = vec![
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let tangent_seeds = HashMap::from([(x_key, arc(1.0))]);
+
+    let mut callbacks = ScalarForwardCallbacks;
+    let tangent = eager::try_forward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        &tangent_seeds,
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap()
+    .expect("active output tangent");
+
+    assert_eq!(*tangent, 6.0);
+}
+
+#[test]
+fn try_forward_orders_dependencies_before_output() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let inputs = vec![scalar_input("a", 2.0, true), scalar_input("b", 5.0, true)];
+    let add_outputs = record_scalar_op(&mut recorder, ScalarOp::Add, &inputs, &[arc(7.0)]);
+    let neg_inputs = vec![scalar_input_from_output(&add_outputs[0], 7.0, true)];
+    let neg_outputs = record_scalar_op(&mut recorder, ScalarOp::Neg, &neg_inputs, &[arc(-7.0)]);
+    let tangent_seeds = HashMap::from([(ValueKey::Input(sk("a")), arc(1.0))]);
+
+    let mut callbacks = ScalarForwardCallbacks;
+    let tangent = eager::try_forward(
+        &neg_outputs[0].key,
+        neg_outputs[0].trace.as_ref(),
+        &tangent_seeds,
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap()
+    .expect("active output tangent");
+
+    assert_eq!(*tangent, -1.0);
+}
+
+#[test]
+fn try_forward_returns_none_for_inactive_output() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let inputs = vec![scalar_input("x", 2.0, true), scalar_input("y", 5.0, true)];
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Add, &inputs, &[arc(7.0)]);
+    let tangent_seeds = HashMap::from([(ValueKey::Input(sk("z")), arc(1.0))]);
+
+    let mut callbacks = ScalarForwardCallbacks;
+    let tangent = eager::try_forward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        &tangent_seeds,
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
+
+    assert!(tangent.is_none());
 }
 
 /// Fan-out test: f(x) = x + x, df/dx = 2.

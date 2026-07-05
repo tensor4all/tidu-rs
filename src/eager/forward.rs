@@ -6,6 +6,7 @@ use computegraph::{GraphOperation, ValueKey};
 
 use crate::LinearizedGraph;
 
+use super::record::RecordedGraph;
 use super::trace::{Trace, TraceNode};
 
 /// Tangent seed aligned with one linearized graph input.
@@ -19,6 +20,20 @@ pub trait ForwardExecutor<Op: Primitive>
 where
     Op::InputKey: ADKey,
 {
+    /// Linearize one recorded eager graph node for forward-mode propagation.
+    ///
+    /// The default implementation calls [`RecordedGraph::linearize`]. Runtime
+    /// owners may override this to memoize per-node transform results without
+    /// taking trace traversal ownership away from tidu.
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<Op>,
+        output_slots: &[usize],
+        ctx: &mut Op::ADContext,
+    ) -> ADRuleResult<Arc<LinearizedGraph<Op>>> {
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
     /// Run a linearized graph with concrete tangent seeds.
     fn run_linearized_forward(
         &mut self,
@@ -67,7 +82,7 @@ where
         }
 
         let output_slots: Vec<usize> = (0..node.primal_out_keys().len()).collect();
-        let linear = node.computation().linearize(&output_slots, ctx)?;
+        let linear = executor.linearize_recorded_graph(node.computation(), &output_slots, ctx)?;
         let tangent_in: Vec<_> = linear
             .tangent_inputs()
             .iter()
@@ -78,8 +93,12 @@ where
                 )
             })
             .collect();
-        let tangent_out =
-            executor.run_linearized_forward(&linear, &tangent_in, node.saved_data(), ctx)?;
+        let tangent_out = executor.run_linearized_forward(
+            linear.as_ref(),
+            &tangent_in,
+            node.saved_data(),
+            ctx,
+        )?;
         assert_eq!(
             tangent_out.len(),
             output_slots.len(),

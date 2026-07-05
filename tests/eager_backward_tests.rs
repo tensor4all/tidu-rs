@@ -10,7 +10,7 @@ use tidu::eager::{
     Recorder,
 };
 use tidu::{
-    linearize, try_linear_transpose_with_builder, ADKey, DiffPassId, LinearizedGraph, Primitive,
+    linear_transpose_with_builder, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive,
     PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
 };
 
@@ -88,9 +88,9 @@ impl Primitive for ScalarOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Add => scalar_add_tangents(builder, tangent_in),
+            Self::Add => Ok(scalar_add_tangents(builder, tangent_in)),
             Self::Mul => {
                 let mut terms = Vec::new();
                 if let Some(dx) = tangent_in[0] {
@@ -119,9 +119,9 @@ impl Primitive for ScalarOp {
                     );
                     terms.push(term[0]);
                 }
-                scalar_sum_terms(builder, terms)
+                Ok(scalar_sum_terms(builder, terms))
             }
-            Self::Neg => tangent_in[0].map_or_else(
+            Self::Neg => Ok(tangent_in[0].map_or_else(
                 || vec![None],
                 |dx| {
                     let out = builder.add_primitive(
@@ -133,7 +133,7 @@ impl Primitive for ScalarOp {
                     );
                     vec![Some(out[0])]
                 },
-            ),
+            )),
         }
     }
 
@@ -144,15 +144,15 @@ impl Primitive for ScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => scalar_transpose_mul(builder, inputs, ct, role),
+            Self::Add => Ok(vec![Some(ct), Some(ct)]),
+            Self::Mul => Ok(scalar_transpose_mul(builder, inputs, ct, role)),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
@@ -161,7 +161,7 @@ impl Primitive for ScalarOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
         }
     }
@@ -282,7 +282,7 @@ impl Primitive for TwoOutputOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => match (tangent_in[0], tangent_in[1]) {
                 (Some(lhs), Some(rhs)) => {
@@ -293,15 +293,16 @@ impl Primitive for TwoOutputOp {
                             active_mask: vec![true, true],
                         },
                     )[0];
-                    vec![Some(sum)]
+                    Ok(vec![Some(sum)])
                 }
-                (Some(lhs), None) => vec![Some(lhs)],
-                (None, Some(rhs)) => vec![Some(rhs)],
-                (None, None) => vec![None],
+                (Some(lhs), None) => Ok(vec![Some(lhs)]),
+                (None, Some(rhs)) => Ok(vec![Some(rhs)]),
+                (None, None) => Ok(vec![None]),
             },
             Self::Split => {
-                let Some(dx) = tangent_in[0] else {
-                    return vec![None, None];
+                let dx = match tangent_in[0] {
+                    Some(dx) => dx,
+                    None => return Ok(vec![None, None]),
                 };
                 let doubled = builder.add_primitive(
                     Self::Add,
@@ -310,7 +311,7 @@ impl Primitive for TwoOutputOp {
                         active_mask: vec![true, true],
                     },
                 )[0];
-                vec![Some(dx), Some(doubled)]
+                Ok(vec![Some(dx), Some(doubled)])
             }
         }
     }
@@ -322,9 +323,9 @@ impl Primitive for TwoOutputOp {
         _inputs: &[PrimitiveValue<Self>],
         _mode: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Add => vec![cotangent_out[0], cotangent_out[0]],
+            Self::Add => Ok(vec![cotangent_out[0], cotangent_out[0]]),
             Self::Split => panic!("Split should be linearized before linear_transpose"),
         }
     }
@@ -428,6 +429,7 @@ fn scalar_recorded_graph(
         .map(|output_id| graph.values()[*output_id].key.clone())
         .collect();
     RecordedGraph::new(graph, input_keys, output_keys)
+        .expect("test graph metadata should align with provided keys")
 }
 
 fn record_scalar_op(
@@ -437,9 +439,12 @@ fn record_scalar_op(
     outputs: &[Arc<f64>],
 ) -> Vec<EagerOutput<ScalarOp>> {
     let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(inputs.len());
-    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys)
+        .expect("test primitive graph metadata should be valid");
     let retained = retained_outputs(&graph, outputs);
-    recorder.record_graph(graph, inputs, outputs, retained)
+    recorder
+        .record_graph(graph, inputs, outputs, retained)
+        .expect("test eager recording metadata should be valid")
 }
 
 fn record_two_output_op(
@@ -449,9 +454,12 @@ fn record_two_output_op(
     outputs: &[Arc<f64>],
 ) -> Vec<EagerOutput<TwoOutputOp>> {
     let graph_input_keys = recorder.fresh_input_keys::<TwoOutputOp>(inputs.len());
-    let graph = RecordedGraph::from_primitive(op, graph_input_keys);
+    let graph = RecordedGraph::from_primitive(op, graph_input_keys)
+        .expect("test primitive graph metadata should be valid");
     let retained = retained_outputs(&graph, outputs);
-    recorder.record_graph(graph, inputs, outputs, retained)
+    recorder
+        .record_graph(graph, inputs, outputs, retained)
+        .expect("test eager recording metadata should be valid")
 }
 
 fn retained_outputs<Op: computegraph::GraphOperation>(
@@ -500,13 +508,11 @@ impl BackwardExecutor<TwoOutputOp> for PartialOutputCallbacks {
             })
             .collect();
 
-        try_linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(
-            |ids| {
-                ids.into_iter()
-                    .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
-                    .collect()
-            },
-        )
+        linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(|ids| {
+            ids.into_iter()
+                .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
+                .collect()
+        })
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -636,13 +642,11 @@ impl BackwardExecutor<ScalarOp> for ScalarBackwardCallbacks {
             })
             .collect();
 
-        try_linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(
-            |ids| {
-                ids.into_iter()
-                    .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
-                    .collect()
-            },
-        )
+        linear_transpose_with_builder(linear, &mut builder, &cotangent_seed_ids, ctx).map(|ids| {
+            ids.into_iter()
+                .map(|maybe_id| maybe_id.map(|id| builder.value(id)))
+                .collect()
+        })
     }
 
     fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
@@ -701,8 +705,87 @@ impl ForwardExecutor<ScalarOp> for ScalarForwardCallbacks {
     }
 }
 
+#[derive(Default)]
+struct CountingBackwardCallbacks {
+    linearize_calls: usize,
+    requested_slots: Vec<Vec<usize>>,
+}
+
+impl BackwardExecutor<ScalarOp> for CountingBackwardCallbacks {
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<ScalarOp>,
+        output_slots: &[usize],
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Arc<LinearizedGraph<ScalarOp>>> {
+        self.linearize_calls += 1;
+        self.requested_slots.push(output_slots.to_vec());
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
+    fn execute_forward(
+        &mut self,
+        graph: PrimitiveGraph<'_, ScalarOp>,
+        initial_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+    ) -> HashMap<ValueKey<ScalarOp>, Arc<f64>> {
+        let mut base = ScalarBackwardCallbacks;
+        base.execute_forward(graph, initial_data)
+    }
+
+    fn run_transposed_linear(
+        &mut self,
+        linear: &LinearizedGraph<ScalarOp>,
+        cotangent_out: &[Option<Arc<f64>>],
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
+        let mut base = ScalarBackwardCallbacks;
+        base.run_transposed_linear(linear, cotangent_out, external_data, ctx)
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        let mut base = ScalarBackwardCallbacks;
+        base.add_operands(a, b)
+    }
+}
+
+#[derive(Default)]
+struct CountingForwardCallbacks {
+    linearize_calls: usize,
+    requested_slots: Vec<Vec<usize>>,
+}
+
+impl ForwardExecutor<ScalarOp> for CountingForwardCallbacks {
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<ScalarOp>,
+        output_slots: &[usize],
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Arc<LinearizedGraph<ScalarOp>>> {
+        self.linearize_calls += 1;
+        self.requested_slots.push(output_slots.to_vec());
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
+    fn run_linearized_forward(
+        &mut self,
+        linear: &LinearizedGraph<ScalarOp>,
+        tangent_in: &[(ScalarKey, Option<Arc<f64>>)],
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
+        let mut base = ScalarForwardCallbacks;
+        base.run_linearized_forward(linear, tangent_in, external_data, ctx)
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        let mut base = ScalarForwardCallbacks;
+        base.add_operands(a, b)
+    }
+}
+
 #[test]
-fn try_linear_transpose_with_builder_propagates_add_cotangents() {
+fn linear_transpose_with_builder_propagates_add_cotangents() {
     let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
     let y = builder.add_input(sk("y"));
@@ -721,12 +804,13 @@ fn try_linear_transpose_with_builder_propagates_add_cotangents() {
         1,
         &mut (),
         &HashMap::new(),
-    );
+    )
+    .expect("sum graph should linearize");
 
     let mut builder = ScalarEagerBuilder::new(HashMap::new());
     let seed = builder.push_value(arc(1.0));
     let cotangent_inputs =
-        try_linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
+        linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
 
     let values: Vec<f64> = cotangent_inputs
         .into_iter()
@@ -737,7 +821,7 @@ fn try_linear_transpose_with_builder_propagates_add_cotangents() {
 }
 
 #[test]
-fn try_backward_orders_dependencies_before_output() {
+fn backward_orders_dependencies_before_output() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let inputs = vec![scalar_input("a", 2.0, true), scalar_input("b", 5.0, true)];
     let add_outputs = record_scalar_op(&mut recorder, ScalarOp::Add, &inputs, &[arc(7.0)]);
@@ -745,7 +829,7 @@ fn try_backward_orders_dependencies_before_output() {
     let neg_outputs = record_scalar_op(&mut recorder, ScalarOp::Neg, &neg_inputs, &[arc(-7.0)]);
 
     let mut callbacks = ScalarBackwardCallbacks;
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &neg_outputs[0].key,
         neg_outputs[0].trace.as_ref(),
         arc(1.0),
@@ -759,7 +843,7 @@ fn try_backward_orders_dependencies_before_output() {
 }
 
 #[test]
-fn try_backward_accumulates_x_squared_gradient() {
+fn backward_accumulates_x_squared_gradient() {
     let x_grad_key = ValueKey::Input(sk("x"));
     let inputs = vec![
         EagerInput {
@@ -778,7 +862,7 @@ fn try_backward_accumulates_x_squared_gradient() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
     let mut callbacks = ScalarBackwardCallbacks;
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[0].key,
         outputs[0].trace.as_ref(),
         arc(1.0),
@@ -791,7 +875,42 @@ fn try_backward_accumulates_x_squared_gradient() {
 }
 
 #[test]
-fn try_backward_records_multi_op_graph_as_one_node() {
+fn backward_uses_executor_linearize_hook() {
+    let x_grad_key = ValueKey::Input(sk("x"));
+    let inputs = vec![
+        EagerInput {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        EagerInput {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let mut callbacks = CountingBackwardCallbacks::default();
+
+    let cotangents = eager::backward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
+
+    assert_eq!(callbacks.linearize_calls, 1);
+    assert_eq!(callbacks.requested_slots, vec![vec![0]]);
+    assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
+}
+
+#[test]
+fn backward_records_multi_op_graph_as_one_node() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let graph_input_keys = recorder.fresh_input_keys::<ScalarOp>(2);
     let mut builder = GraphBuilder::<ScalarOp>::new();
@@ -810,10 +929,12 @@ fn try_backward_records_multi_op_graph_as_one_node() {
     builder.set_outputs(vec![sum[0]]);
     let recorded_graph = scalar_recorded_graph(builder.build(), graph_input_keys);
     let inputs = vec![scalar_input("x", 2.0, true), scalar_input("y", 3.0, true)];
-    let outputs = recorder.record_graph(recorded_graph, &inputs, &[arc(9.0)], HashMap::new());
+    let outputs = recorder
+        .record_graph(recorded_graph, &inputs, &[arc(9.0)], HashMap::new())
+        .expect("test eager recording metadata should be valid");
 
     let mut callbacks = ScalarBackwardCallbacks;
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[0].key,
         outputs[0].trace.as_ref(),
         arc(1.0),
@@ -827,7 +948,7 @@ fn try_backward_records_multi_op_graph_as_one_node() {
 }
 
 #[test]
-fn try_backward_linearizes_only_seeded_multi_output_slots() {
+fn backward_linearizes_only_seeded_multi_output_slots() {
     let grad_key = ValueKey::Input(sk("grad_x"));
     let inputs = vec![EagerInput {
         key: grad_key.clone(),
@@ -847,7 +968,7 @@ fn try_backward_linearizes_only_seeded_multi_output_slots() {
         observed_seed_slots: 0,
     };
 
-    let cotangents = eager::try_backward(
+    let cotangents = eager::backward(
         &outputs[1].key,
         outputs[1].trace.as_ref(),
         arc(1.0),
@@ -897,6 +1018,43 @@ fn try_forward_accumulates_x_squared_tangent() {
 }
 
 #[test]
+fn try_forward_uses_executor_linearize_hook() {
+    let x_key = ValueKey::Input(sk("x"));
+    let inputs = vec![
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let tangent_seeds = HashMap::from([(x_key, arc(1.0))]);
+    let mut callbacks = CountingForwardCallbacks::default();
+
+    let tangent = eager::try_forward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        &tangent_seeds,
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap()
+    .expect("active output tangent");
+
+    assert_eq!(callbacks.linearize_calls, 1);
+    assert_eq!(callbacks.requested_slots, vec![vec![0]]);
+    assert_eq!(*tangent, 6.0);
+}
+
+#[test]
 fn try_forward_orders_dependencies_before_output() {
     let mut recorder = Recorder::new(TestKeySource::default());
     let inputs = vec![scalar_input("a", 2.0, true), scalar_input("b", 5.0, true)];
@@ -942,7 +1100,7 @@ fn try_forward_returns_none_for_inactive_output() {
 /// Fan-out test: f(x) = x + x, df/dx = 2.
 /// This exercises the cotangent accumulation (Op::add) path in `linear_transpose`.
 #[test]
-fn try_linear_transpose_with_builder_fan_out_accumulation() {
+fn linear_transpose_with_builder_fan_out_accumulation() {
     // Build linearized graph for x + x: tangent(x) used twice
     let mut builder = GraphBuilder::<ScalarOp>::new();
     let x = builder.add_input(sk("x"));
@@ -961,12 +1119,13 @@ fn try_linear_transpose_with_builder_fan_out_accumulation() {
         1,
         &mut (),
         &HashMap::new(),
-    );
+    )
+    .expect("fan-out graph should linearize");
 
     let mut builder = ScalarEagerBuilder::new(HashMap::new());
     let seed = builder.push_value(arc(1.0));
     let cotangent_inputs =
-        try_linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
+        linear_transpose_with_builder(&linear, &mut builder, &[Some(seed)], &mut ()).unwrap();
 
     // df/dx = 2 (cotangent accumulated from two paths)
     let dx = *builder.value(cotangent_inputs[0].expect("active"));

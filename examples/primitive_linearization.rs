@@ -81,9 +81,12 @@ impl Primitive for ScalarOp {
         primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Add => sum_tangent_terms(builder, tangent_inputs.iter().filter_map(|id| *id)),
+            Self::Add => Ok(sum_tangent_terms(
+                builder,
+                tangent_inputs.iter().filter_map(|id| *id),
+            )),
             Self::Mul => {
                 let mut terms = Vec::new();
                 if let Some(dx) = tangent_inputs[0] {
@@ -112,9 +115,9 @@ impl Primitive for ScalarOp {
                     );
                     terms.push(term[0]);
                 }
-                sum_tangent_terms(builder, terms)
+                Ok(sum_tangent_terms(builder, terms))
             }
-            Self::Neg => tangent_inputs[0].map_or_else(
+            Self::Neg => Ok(tangent_inputs[0].map_or_else(
                 || vec![None],
                 |dx| {
                     let out = builder.add_primitive(
@@ -126,7 +129,7 @@ impl Primitive for ScalarOp {
                     );
                     vec![Some(out[0])]
                 },
-            ),
+            )),
             Self::Exp => {
                 if let Some(dx) = tangent_inputs[0] {
                     let out = builder.add_primitive(
@@ -139,9 +142,9 @@ impl Primitive for ScalarOp {
                             active_mask: vec![false, true],
                         },
                     );
-                    vec![Some(out[0])]
+                    Ok(vec![Some(out[0])])
                 } else {
-                    vec![None]
+                    Ok(vec![None])
                 }
             }
         }
@@ -154,15 +157,15 @@ impl Primitive for ScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_outputs[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
-            Self::Mul => transpose_mul(builder, inputs, ct, role),
+            Self::Add => Ok(vec![Some(ct), Some(ct)]),
+            Self::Mul => Ok(transpose_mul(builder, inputs, ct, role)),
             Self::Neg => {
                 let out = builder.add_primitive(
                     Self::Neg,
@@ -171,7 +174,7 @@ impl Primitive for ScalarOp {
                         active_mask: vec![true],
                     },
                 );
-                vec![Some(out[0])]
+                Ok(vec![Some(out[0])])
             }
             Self::Exp => panic!("Exp should be linearized before linear_transpose"),
         }
@@ -309,8 +312,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         1,
         &mut (),
         &HashMap::new(),
-    );
-    let transposed = linear_transpose(&linear, &mut ());
+    )?;
+    let transposed = linear_transpose(&linear, &mut ())?;
 
     let dy_key = tangent_output_key(&linear, 0).expect("active tangent output");
     let dx_key = tangent_input_key(&linear, 0);

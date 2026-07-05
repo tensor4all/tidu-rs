@@ -6,7 +6,7 @@ use tidu::PrimitiveValue;
 #[macro_export]
 macro_rules! linearize_add {
     ($builder:expr, $OpAdd:path, $t0:expr, $t1:expr) => {
-        match ($t0, $t1) {
+        Ok(match ($t0, $t1) {
             (Some(dx), Some(dy)) => {
                 let out = $builder.add_primitive(
                     $OpAdd,
@@ -20,7 +20,7 @@ macro_rules! linearize_add {
             (Some(dx), None) => vec![Some(dx)],
             (None, Some(dy)) => vec![Some(dy)],
             (None, None) => vec![None],
-        }
+        })
     };
 }
 
@@ -54,7 +54,7 @@ macro_rules! linearize_mul {
             );
             terms.push(term[0]);
         }
-        match terms.as_slice() {
+        Ok(match terms.as_slice() {
             [] => vec![None],
             [only] => vec![Some(*only)],
             [lhs, rhs] => {
@@ -68,14 +68,14 @@ macro_rules! linearize_mul {
                 vec![Some(sum[0])]
             }
             _ => unreachable!("mul linearization creates at most two terms"),
-        }
+        })
     }};
 }
 
 #[macro_export]
 macro_rules! linearize_exp {
     ($builder:expr, $OpMul:path, $primal_out:expr, $t0:expr) => {
-        match $t0 {
+        Ok(match $t0 {
             Some(dx) => {
                 let out = $builder.add_primitive(
                     $OpMul,
@@ -90,14 +90,14 @@ macro_rules! linearize_exp {
                 vec![Some(out[0])]
             }
             None => vec![None],
-        }
+        })
     };
 }
 
 #[macro_export]
 macro_rules! linearize_neg {
     ($builder:expr, $OpNeg:path, $t0:expr) => {
-        match $t0 {
+        Ok(match $t0 {
             Some(dx) => {
                 let out = $builder.add_primitive(
                     $OpNeg,
@@ -109,14 +109,14 @@ macro_rules! linearize_neg {
                 vec![Some(out[0])]
             }
             None => vec![None],
-        }
+        })
     };
 }
 
 #[macro_export]
 macro_rules! linearize_conj {
     ($builder:expr, $OpConj:path, $t0:expr) => {
-        match $t0 {
+        Ok(match $t0 {
             Some(dx) => {
                 let out = $builder.add_primitive(
                     $OpConj,
@@ -128,6 +128,6 @@ macro_rules! linearize_conj {
                 vec![Some(out[0])]
             }
             None => vec![None],
-        }
+        })
     };
 }

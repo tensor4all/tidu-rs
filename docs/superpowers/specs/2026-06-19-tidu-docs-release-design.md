@@ -112,7 +112,7 @@ flowchart TB
   end
   subgraph TD["tidu — AD engine"]
     direction LR
-    TR["linearize · linear_transpose · eager::try_backward"]
+    TR["linearize · linear_transpose · eager::backward"]
     CON["rules contract: Primitive, PrimitiveBuilder, PrimitiveValue, ADKey"]
   end
   CG["computegraph — Graph, ValueKey, LocalValueId, resolve"]
@@ -140,7 +140,7 @@ flowchart TB
   subgraph DOWN["Downstream — impl Primitive for Op"]
     J["jvp_rule(...)"]
     T["transpose_rule(...)"]
-    A["add()  ·  try_jvp_rule / try_linear_transpose_rule"]
+    A["add()  ·  ADRuleResult"]
   end
   subgraph TIDU["tidu transforms"]
     L["linearize / linear_transpose"]
@@ -161,8 +161,8 @@ implementation.
 
 ### ④ eager record → backward (eager-integration)
 
-Sequence diagram across `Downstream`, `Recorder`, `tidu::eager::try_backward`, and
-`BackwardExecutor`: `record_graph` produces a `Trace`; `try_backward` topologically
+Sequence diagram across `Downstream`, `Recorder`, `tidu::eager::backward`, and
+`BackwardExecutor`: `record_graph` produces a `Trace`; `backward` topologically
 walks the trace, and per node linearizes + transposes the recorded graph, invoking the
 executor's forward-replay / transposed-run / accumulate hooks, returning the cotangents
 map. Finalized as Mermaid during implementation.
@@ -198,7 +198,7 @@ misnames the API is a release blocker, not a cosmetic issue.
     shown with a minimal example.
 - `guides/eager-integration.md`:
   - **"The backward call sequence"** — the concrete sequence: `Recorder::record_graph`
-    → `EagerOutput` / `Trace` → (inside `try_backward`) topologically sort the trace →
+    → `EagerOutput` / `Trace` → (inside `backward`) topologically sort the trace →
     per node linearize + transpose → executor hooks (`execute_forward`,
     `run_transposed_linear`, `add_operands`) replay forward, run the transposed map, and
     accumulate → cotangents map. Includes diagram ④. Also documents the currently
@@ -214,12 +214,11 @@ public-module entry points.
 
 Reorganize by module with a one-line description per item:
 
-- **Transforms**: `linearize`, `try_linearize`, `linear_transpose`,
-  `try_linear_transpose`, `try_linear_transpose_with_builder`, `LinearizedGraph`,
-  `PrimitiveGraph`.
+- **Transforms**: `linearize`, `linear_transpose`,
+  `linear_transpose_with_builder`, `LinearizedGraph`, `PrimitiveGraph`.
 - **Rules**: `Primitive`, `PrimitiveBuilder`, `PrimitiveValue`, `ADKey`,
   **`ADRuleError`, `ADRuleKind`, `ADRuleResult`, `DiffPassId`** (the four missing items).
-- **Eager**: `try_backward`, `BackwardExecutor`, `Recorder`, `RecordedGraph`,
+- **Eager**: `backward`, `try_forward`, `BackwardExecutor`, `ForwardExecutor`, `Recorder`, `RecordedGraph`,
   `EagerInput`, `EagerOutput`, `KeySource`, `Trace`.
 
 ### README

@@ -19,7 +19,7 @@ flowchart TB
   end
   subgraph TD["tidu — AD engine"]
     direction LR
-    TR["linearize · linear_transpose · eager::try_backward"]
+    TR["linearize · linear_transpose · eager::backward"]
     CON["rules contract<br/>Primitive · PrimitiveBuilder · PrimitiveValue · ADKey"]
   end
   CG["computegraph<br/>Graph · ValueKey · LocalValueId · OperationRole · resolve"]
@@ -39,8 +39,8 @@ flowchart LR
   SRC["Primal graph<br/>computegraph::Graph"]
   JVP["LinearizedGraph (JVP)<br/>tangent inputs → tangent outputs"]
   VJP["Transposed LinearizedGraph (VJP)<br/>cotangent seeds → input cotangents"]
-  SRC -->|"linearize() / try_linearize()<br/>calls Primitive::jvp_rule()"| JVP
-  JVP -->|"linear_transpose() / try_linear_transpose()<br/>calls transpose_rule(); emits add() to accumulate"| VJP
+  SRC -->|"linearize()<br/>calls Primitive::jvp_rule()"| JVP
+  JVP -->|"linear_transpose()<br/>calls transpose_rule(); emits add() to accumulate"| VJP
 ```
 
 `linearize` asks each primitive for its JVP rule and produces a `LinearizedGraph`
@@ -59,7 +59,7 @@ flowchart TB
   subgraph DOWN["Downstream — impl Primitive for Op"]
     J["jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx)"]
     T["transpose_rule(builder, cotangent_outputs, inputs, role, ctx)"]
-    A["add() · try_jvp_rule · try_linear_transpose_rule"]
+    A["add() · ADRuleResult"]
   end
   subgraph TIDU["tidu transforms"]
     L["linearize / linear_transpose"]

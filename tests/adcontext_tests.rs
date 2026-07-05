@@ -55,7 +55,7 @@ impl Primitive for CountingOp {
         _primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         ctx: &mut CountingContext,
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         ctx.linearize_count += 1;
 
         match self {
@@ -69,9 +69,9 @@ impl Primitive for CountingOp {
                             active_mask: vec![true],
                         },
                     );
-                    vec![Some(out[0])]
+                    Ok(vec![Some(out[0])])
                 }
-                None => vec![None],
+                None => Ok(vec![None]),
             },
         }
     }
@@ -83,15 +83,15 @@ impl Primitive for CountingOp {
         _inputs: &[PrimitiveValue<Self>],
         _mode: &OperationRole,
         ctx: &mut CountingContext,
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         ctx.transpose_count += 1;
 
         match self {
             Self::Add => match cotangent_out[0] {
                 Some(ct) => transpose_add!(ct),
-                None => vec![None, None],
+                None => Ok(vec![None, None]),
             },
-            Self::Identity => vec![cotangent_out[0]],
+            Self::Identity => Ok(vec![cotangent_out[0]]),
         }
     }
 }
@@ -125,7 +125,8 @@ fn linearize_threads_ctx_to_all_ops() {
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let _linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let _linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new())
+        .expect("identity chain should linearize");
 
     assert_eq!(
         ctx.linearize_count, 2,
@@ -140,11 +141,13 @@ fn linear_transpose_threads_ctx_to_all_ops() {
     let wrt = vec![ck("x")];
 
     let mut ctx = CountingContext::default();
-    let linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new());
+    let linear = tidu::linearize(&view, &[output_key], &wrt, 1, &mut ctx, &HashMap::new())
+        .expect("identity chain should linearize");
 
     ctx.linearize_count = 0;
     ctx.transpose_count = 0;
-    let _transposed = tidu::linear_transpose(&linear, &mut ctx);
+    let _transposed =
+        tidu::linear_transpose(&linear, &mut ctx).expect("identity chain should transpose");
 
     assert_eq!(
         ctx.transpose_count, 2,

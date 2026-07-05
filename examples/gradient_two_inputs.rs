@@ -79,11 +79,11 @@ impl Primitive for ScalarOp {
         _primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             Self::Add => {
                 let terms: Vec<_> = tangent_inputs.iter().flatten().copied().collect();
-                vec![sum_terms(builder, terms)]
+                Ok(vec![sum_terms(builder, terms)])
             }
             Self::Mul => {
                 let mut terms = Vec::new();
@@ -113,7 +113,7 @@ impl Primitive for ScalarOp {
                     );
                     terms.push(term[0]);
                 }
-                vec![sum_terms(builder, terms)]
+                Ok(vec![sum_terms(builder, terms)])
             }
         }
     }
@@ -125,17 +125,17 @@ impl Primitive for ScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_outputs[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
         match self {
-            Self::Add => vec![Some(ct), Some(ct)],
+            Self::Add => Ok(vec![Some(ct), Some(ct)]),
             Self::Mul => {
                 let active_mask = match role {
                     OperationRole::Linearized { active_mask } => active_mask,
-                    OperationRole::Primary => return vec![None, None],
+                    OperationRole::Primary => return Ok(vec![None, None]),
                 };
                 let mut result = vec![None, None];
                 if active_mask[0] {
@@ -158,7 +158,7 @@ impl Primitive for ScalarOp {
                     );
                     result[1] = Some(out[0]);
                 }
-                result
+                Ok(result)
             }
         }
     }
@@ -261,8 +261,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         1,
         &mut (),
         &HashMap::new(),
-    );
-    let transposed = linear_transpose(&linear, &mut ());
+    )?;
+    let transposed = linear_transpose(&linear, &mut ())?;
 
     // The transposed graph takes one cotangent seed (for f) and produces one
     // cotangent per active input, in the order [x, y].

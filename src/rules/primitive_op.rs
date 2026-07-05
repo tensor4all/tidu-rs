@@ -3,8 +3,8 @@ use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 
 /// Extends `GraphOperation` with primitive JVP and transpose rules for AD.
 ///
-/// - `try_jvp_rule` is called by [`crate::try_linearize`]
-/// - `try_linear_transpose_rule` is called by [`crate::try_linear_transpose`]
+/// - `jvp_rule` is called by [`crate::linearize`]
+/// - `transpose_rule` is called by [`crate::linear_transpose`]
 ///
 /// Both methods add new primitive applications through a [`PrimitiveBuilder`]. The downstream
 /// implementor is responsible for ensuring closure: every op emitted must also
@@ -43,15 +43,15 @@ use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 ///         _pi: &[ValueKey<Self>], _po: &[ValueKey<Self>],
 ///         t: &[Option<LocalValueId>],
 ///         _ctx: &mut (),
-///     ) -> Vec<Option<LocalValueId>> {
-///         vec![t[0].or(t[1])]
+///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+///         Ok(vec![t[0].or(t[1])])
 ///     }
 ///     fn transpose_rule(
 ///         &self, _builder: &mut impl PrimitiveBuilder<Self>,
 ///         ct: &[Option<LocalValueId>], _i: &[PrimitiveValue<Self>], _m: &OperationRole,
 ///         _ctx: &mut (),
-///     ) -> Vec<Option<LocalValueId>> {
-///         vec![ct[0], ct[0]]
+///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+///         Ok(vec![ct[0], ct[0]])
 ///     }
 /// }
 /// ```
@@ -83,29 +83,9 @@ where
         primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>>
-    where
-        Self: Sized;
-
-    /// Fallible variant of [`Primitive::jvp_rule`].
-    ///
-    /// Implementors that can encounter missing extension rules should override
-    /// this method and return [`super::ADRuleError`] instead of panicking. The
-    /// default implementation preserves the infallible contract for existing
-    /// primitive sets.
-    fn try_jvp_rule(
-        &self,
-        builder: &mut impl PrimitiveBuilder<Self>,
-        primal_inputs: &[ValueKey<Self>],
-        primal_outputs: &[ValueKey<Self>],
-        tangent_inputs: &[Option<LocalValueId>],
-        ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValueId>>>
     where
-        Self: Sized,
-    {
-        Ok(self.jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx))
-    }
+        Self: Sized;
 
     /// Emit the transpose rule for this linear primitive.
     ///
@@ -118,27 +98,7 @@ where
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>>
-    where
-        Self: Sized;
-
-    /// Fallible variant of [`Primitive::transpose_rule`].
-    ///
-    /// Implementors that can encounter missing extension rules should override
-    /// this method and return [`super::ADRuleError`] instead of panicking. The
-    /// default implementation preserves the infallible contract for existing
-    /// primitive sets.
-    fn try_linear_transpose_rule(
-        &self,
-        builder: &mut impl PrimitiveBuilder<Self>,
-        cotangent_outputs: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
-        role: &OperationRole,
-        ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValueId>>>
     where
-        Self: Sized,
-    {
-        Ok(self.transpose_rule(builder, cotangent_outputs, inputs, role, ctx))
-    }
+        Self: Sized;
 }

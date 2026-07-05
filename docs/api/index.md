@@ -13,11 +13,11 @@ integration.
 
 ## Transforms
 
-- `tidu::linearize` / `tidu::try_linearize` — build a JVP graph for selected
-  outputs with respect to selected inputs.
-- `tidu::linear_transpose` / `tidu::try_linear_transpose` — transpose a
-  linearized graph so cotangents flow backward.
-- `tidu::try_linear_transpose_with_builder` — transpose directly through a
+- `tidu::linearize` — build a JVP graph for selected outputs with respect to
+  selected inputs.
+- `tidu::linear_transpose` — transpose a linearized graph so cotangents flow
+  backward.
+- `tidu::linear_transpose_with_builder` — transpose directly through a
   downstream builder for eager execution.
 - `tidu::LinearizedGraph` — result of linearization/transposition; exposes
   `tangent_inputs`, `tangent_outputs`, `as_graph`, `into_graph`.
@@ -26,21 +26,26 @@ integration.
 ## Rule Contract (`tidu::rules`)
 
 - `tidu::Primitive` — trait downstream operations implement (`add`, `jvp_rule`,
-  `transpose_rule`, and their `try_` variants).
+  and `transpose_rule`).
 - `tidu::PrimitiveBuilder` — emits new operations from a rule (`add_primitive`).
 - `tidu::PrimitiveValue` — a rule operand: `Local(LocalValueId)` or
   `External(ValueKey)`.
 - `tidu::ADKey` — input-key contract (`tangent_of`) for deriving tangent keys.
 - `tidu::ADRuleError` — error for a missing AD rule.
 - `tidu::ADRuleKind` — which rule is missing (`Jvp` or `Transpose`).
-- `tidu::ADRuleResult` — `Result<T, ADRuleError>` returned by the `try_` APIs.
+- `tidu::ADRuleResult` — `Result<T, ADRuleError>` returned by AD transforms
+  and primitive rules.
 - `tidu::DiffPassId` — identifies one `linearize` pass for tangent-key derivation.
 
 ## Eager Integration (`tidu::eager`)
 
-- `tidu::eager::try_backward` — reverse-mode `backward()` over a recorded trace.
+- `tidu::eager::backward` — reverse-mode `backward()` over a recorded trace.
+- `tidu::eager::try_forward` — forward-mode JVP propagation over a recorded
+  trace.
 - `tidu::eager::BackwardExecutor` — downstream hook for concrete forward replay,
   transposed execution, and cotangent accumulation.
+- `tidu::eager::ForwardExecutor` — downstream hook for eager linearized graph
+  execution and tangent accumulation.
 - `tidu::eager::Recorder` — records eager graph invocations.
 - `tidu::eager::RecordedGraph` — one recorded invocation (one or many operations).
 - `tidu::eager::EagerInput` / `tidu::eager::EagerOutput` — per-value input/output

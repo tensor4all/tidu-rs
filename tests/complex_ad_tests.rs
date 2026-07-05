@@ -4,13 +4,12 @@ mod common;
 use std::sync::Arc;
 
 use common::assertions::assert_complex_approx_eq;
-use common::{evaluate, tangent_input_key, tangent_output_key};
+use common::{evaluate, linear_transpose, linearize, tangent_input_key, tangent_output_key};
 use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use num_complex::Complex64;
-use tidu::{linear_transpose, linearize};
 use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
 
 const TOL: f64 = 1e-10;
@@ -91,7 +90,7 @@ impl Primitive for ComplexScalarOp {
         primal_out: &[ValueKey<Self>],
         tangent_in: &[Option<LocalValueId>],
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
             ComplexScalarOp::Add => {
                 linearize_add!(builder, ComplexScalarOp::Add, tangent_in[0], tangent_in[1])
@@ -119,10 +118,10 @@ impl Primitive for ComplexScalarOp {
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         _ctx: &mut (),
-    ) -> Vec<Option<LocalValueId>> {
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
         let ct = match cotangent_out[0] {
             Some(ct) => ct,
-            None => return vec![None; self.input_count()],
+            None => return Ok(vec![None; self.input_count()]),
         };
 
         match self {

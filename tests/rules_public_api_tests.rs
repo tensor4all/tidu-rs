@@ -56,8 +56,8 @@ impl Primitive for AddOp {
         _primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         _ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>> {
-        vec![tangent_inputs[0].or(tangent_inputs[1])]
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+        Ok(vec![tangent_inputs[0].or(tangent_inputs[1])])
     }
 
     fn transpose_rule(
@@ -67,8 +67,8 @@ impl Primitive for AddOp {
         _inputs: &[PrimitiveValue<Self>],
         _mode: &OperationRole,
         _ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>> {
-        vec![cotangent_outputs[0], cotangent_outputs[0]]
+    ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
+        Ok(vec![cotangent_outputs[0], cotangent_outputs[0]])
     }
 }
 
@@ -107,6 +107,17 @@ fn root_reexports_match_rules_module_contract() {
     assert_eq!(
         transpose_err.to_string(),
         "unsupported transpose AD rule for test::transpose"
+    );
+
+    let invalid: ADRuleError = ModuleADRuleError::invalid_input(
+        "test::solve",
+        ModuleADRuleKind::Transpose,
+        "expected rank >= 2",
+    );
+    assert_eq!(rule_fn(&invalid), ADRuleKind::Transpose);
+    assert_eq!(
+        invalid.to_string(),
+        "invalid transpose AD input for test::solve: expected rank >= 2"
     );
 }
 

@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use common::assertions::assert_scalar_approx_eq;
 use common::numeric::five_point_derivative;
-use common::{evaluate, tangent_input_key, tangent_output_key, ScalarKey, ScalarOp};
+use common::{
+    evaluate, linear_transpose, linearize, tangent_input_key, tangent_output_key, ScalarKey,
+    ScalarOp,
+};
 use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{OperationRole, ValueKey, ValueRef};
-use tidu::{linear_transpose, linearize};
 
 const TOL: f64 = 1e-10;
 

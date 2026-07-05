@@ -26,7 +26,7 @@ Design spec: `docs/superpowers/specs/2026-06-19-tidu-docs-release-design.md`.
 - `OperationRole`: `Primary` | `Linearized { active_mask: Vec<bool> }`.
 - `PrimitiveValue<Op>`: `Local(LocalValueId)` | `External(ValueKey<Op>)`.
 - `PrimitiveBuilder::add_primitive(op, inputs: Vec<PrimitiveValue<Op>>, role: OperationRole) -> Vec<LocalValueId>`.
-- `Primitive`: `add() -> Self`; `jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx)`; `transpose_rule(builder, cotangent_outputs, inputs, role, ctx)`; `try_jvp_rule`; `try_linear_transpose_rule`; assoc `ADContext`.
+- `Primitive`: `add() -> Self`; `jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx) -> ADRuleResult<_>`; `transpose_rule(builder, cotangent_outputs, inputs, role, ctx) -> ADRuleResult<_>`; assoc `ADContext`.
 - `ADKey::tangent_of(pass: DiffPassId) -> Self`; `DiffPassId = u64`.
 - `ADRuleError::Unsupported { op: String, rule: ADRuleKind }`; `ADRuleKind::{Jvp, Transpose}`; `ADRuleResult<T> = Result<T, ADRuleError>`.
 - `LinearizedGraph`: `as_graph`, `into_graph`, `tangent_inputs() -> &[(Op::InputKey, LocalValueId)]`, `tangent_outputs() -> &[Option<LocalValueId>]`.
@@ -34,7 +34,7 @@ Design spec: `docs/superpowers/specs/2026-06-19-tidu-docs-release-design.md`.
 - `Recorder::record_graph(graph, inputs: &[EagerInput], outputs: &[Arc<Operand>], retained_values) -> Vec<EagerOutput>`.
 - `EagerOutput { key, trace, requires_grad, output_slot: usize }`.
 - `BackwardExecutor`: `execute_forward(PrimitiveGraph, initial_data)`, `run_transposed_linear(linear, cotangent_out, external_data, ctx)`, `add_operands(a, b)`.
-- `eager::try_backward(output_key, output_trace, seed, executor, ctx) -> ADRuleResult<HashMap<ValueKey, Arc<Operand>>>`.
+- `eager::backward(output_key, output_trace, seed, executor, ctx) -> ADRuleResult<HashMap<ValueKey, Arc<Operand>>>`.
 
 ---
 
@@ -71,7 +71,7 @@ flowchart TB
   end
   subgraph TD["tidu — AD engine"]
     direction LR
-    TR["linearize · linear_transpose · eager::try_backward"]
+    TR["linearize · linear_transpose · eager::backward"]
     CON["rules contract<br/>Primitive · PrimitiveBuilder · PrimitiveValue · ADKey"]
   end
   CG["computegraph<br/>Graph · ValueKey · LocalValueId · OperationRole · resolve"]
@@ -91,8 +91,8 @@ flowchart LR
   SRC["Primal graph<br/>computegraph::Graph"]
   JVP["LinearizedGraph (JVP)<br/>tangent inputs → tangent outputs"]
   VJP["Transposed LinearizedGraph (VJP)<br/>cotangent seeds → input cotangents"]
-  SRC -->|"linearize() / try_linearize()<br/>calls Primitive::jvp_rule()"| JVP
-  JVP -->|"linear_transpose() / try_linear_transpose()<br/>calls transpose_rule(); emits add() to accumulate"| VJP
+  SRC -->|"linearize()<br/>calls Primitive::jvp_rule()"| JVP
+  JVP -->|"linear_transpose()<br/>calls transpose_rule(); emits add() to accumulate"| VJP
 ```
 
 `linearize` asks each primitive for its JVP rule and produces a `LinearizedGraph`
@@ -111,7 +111,7 @@ flowchart TB
   subgraph DOWN["Downstream — impl Primitive for Op"]
     J["jvp_rule(builder, primal_inputs, primal_outputs, tangent_inputs, ctx)"]
     T["transpose_rule(builder, cotangent_outputs, inputs, role, ctx)"]
-    A["add() · try_jvp_rule · try_linear_transpose_rule"]
+    A["add() · ADRuleResult"]
   end
   subgraph TIDU["tidu transforms"]
     L["linearize / linear_transpose"]
@@ -225,11 +225,11 @@ integration.
 
 ## Transforms
 
-- `tidu::linearize` / `tidu::try_linearize` — build a JVP graph for selected
+- `tidu::linearize` — build a JVP graph for selected
   outputs with respect to selected inputs.
-- `tidu::linear_transpose` / `tidu::try_linear_transpose` — transpose a
+- `tidu::linear_transpose` — transpose a
   linearized graph so cotangents flow backward.
-- `tidu::try_linear_transpose_with_builder` — transpose directly through a
+- `tidu::linear_transpose_with_builder` — transpose directly through a
   downstream builder for eager execution.
 - `tidu::LinearizedGraph` — result of linearization/transposition; exposes
   `tangent_inputs`, `tangent_outputs`, `as_graph`, `into_graph`.
@@ -238,19 +238,19 @@ integration.
 ## Rule Contract (`tidu::rules`)
 
 - `tidu::Primitive` — trait downstream operations implement (`add`, `jvp_rule`,
-  `transpose_rule`, and their `try_` variants).
+  and `transpose_rule`).
 - `tidu::PrimitiveBuilder` — emits new operations from a rule (`add_primitive`).
 - `tidu::PrimitiveValue` — a rule operand: `Local(LocalValueId)` or
   `External(ValueKey)`.
 - `tidu::ADKey` — input-key contract (`tangent_of`) for deriving tangent keys.
 - `tidu::ADRuleError` — error for a missing AD rule.
 - `tidu::ADRuleKind` — which rule is missing (`Jvp` or `Transpose`).
-- `tidu::ADRuleResult` — `Result<T, ADRuleError>` returned by the `try_` APIs.
+- `tidu::ADRuleResult` — `Result<T, ADRuleError>` returned by fallible AD APIs.
 - `tidu::DiffPassId` — identifies one `linearize` pass for tangent-key derivation.
 
 ## Eager Integration (`tidu::eager`)
 
-- `tidu::eager::try_backward` — reverse-mode `backward()` over a recorded trace.
+- `tidu::eager::backward` — reverse-mode `backward()` over a recorded trace.
 - `tidu::eager::BackwardExecutor` — downstream hook for concrete forward replay,
   transposed execution, and cotangent accumulation.
 - `tidu::eager::Recorder` — records eager graph invocations.
@@ -405,12 +405,12 @@ The sequence below runs from recording an invocation to producing cotangents.
 sequenceDiagram
   participant DS as Downstream frontend
   participant R as Recorder
-  participant TB as tidu::eager::try_backward
+  participant TB as tidu::eager::backward
   participant EX as BackwardExecutor
   DS->>R: record_graph(graph, inputs, outputs, retained_values)
   R-->>DS: Vec&lt;EagerOutput&gt; (key, trace, requires_grad, output_slot)
   Note over DS: forward continues; each output's trace links to its inputs
-  DS->>TB: try_backward(output_key, output_trace, seed, executor, ctx)
+  DS->>TB: backward(output_key, output_trace, seed, executor, ctx)
   loop per trace node, reverse topological order
     TB->>EX: execute_forward(PrimitiveGraph, initial_data)
     EX-->>TB: concrete primal values
@@ -427,8 +427,8 @@ sequenceDiagram
    `trace`, `requires_grad`, and `output_slot` (the output's position within the
    recorded graph invocation).
 2. To start reverse mode, the frontend calls
-   `eager::try_backward(output_key, output_trace, seed, executor, ctx)`.
-3. `try_backward` walks the trace in reverse topological order. For each node it
+   `eager::backward(output_key, output_trace, seed, executor, ctx)`.
+3. `backward` walks the trace in reverse topological order. For each node it
    linearizes and transposes the recorded graph, driving the downstream
    `BackwardExecutor`: `execute_forward` replays the primitive graph to recover
    concrete primal values, `run_transposed_linear` runs the transposed linear map
@@ -585,4 +585,4 @@ gh pr merge --auto --squash --delete-branch
 
 **2. Placeholder scan** — diagrams are inlined verbatim (no `[❷]`-style references in the doc content; those placeholders exist only in this review's shorthand). Task 8 Step 1 actively greps for leaked markers. No "TBD"/"add error handling"/"similar to Task N". ✅
 
-**3. Type consistency** — every symbol matches the Verified symbol reference: `add_primitive(op, inputs, role)`, `OperationRole::{Primary, Linearized{active_mask}}`, `ValueKey::{Input, Derived{operation, output_slot}}`, `PrimitiveValue::{Local, External}`, `BackwardExecutor::{execute_forward, run_transposed_linear, add_operands}`, `EagerOutput.output_slot`, `try_backward(output_key, output_trace, seed, executor, ctx)`. Names are identical across Tasks 1–6. ✅
+**3. Type consistency** — every symbol matches the Verified symbol reference: `add_primitive(op, inputs, role)`, `OperationRole::{Primary, Linearized{active_mask}}`, `ValueKey::{Input, Derived{operation, output_slot}}`, `PrimitiveValue::{Local, External}`, `BackwardExecutor::{execute_forward, run_transposed_linear, add_operands}`, `EagerOutput.output_slot`, `backward(output_key, output_trace, seed, executor, ctx)`. Names are identical across Tasks 1–6. ✅

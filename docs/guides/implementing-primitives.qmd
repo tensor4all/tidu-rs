@@ -17,10 +17,10 @@ A primitive operation must first implement `computegraph::GraphOperation`:
 - `add()` returns the primitive used to accumulate cotangents.
 - `jvp_rule()` emits tangent outputs for linearization.
 - `transpose_rule()` emits input cotangents for transposed linear maps.
-- `try_jvp_rule()` and `try_linear_transpose_rule()` can report missing rules
+- Both AD rule methods return `ADRuleResult`, so they can report missing rules
   with `ADRuleError`.
 
-The trait the rules implement (the `try_` variants default to these):
+The trait the rules implement:
 
 ```rust
 pub trait Primitive: GraphOperation
@@ -38,7 +38,7 @@ where
         primal_outputs: &[ValueKey<Self>],
         tangent_inputs: &[Option<LocalValueId>],
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>>;
+    ) -> ADRuleResult<Vec<Option<LocalValueId>>>;
 
     fn transpose_rule(
         &self,
@@ -47,7 +47,7 @@ where
         inputs: &[PrimitiveValue<Self>],
         role: &OperationRole,
         ctx: &mut Self::ADContext,
-    ) -> Vec<Option<LocalValueId>>;
+    ) -> ADRuleResult<Vec<Option<LocalValueId>>>;
 }
 ```
 

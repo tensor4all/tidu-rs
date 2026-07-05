@@ -704,6 +704,85 @@ impl ForwardExecutor<ScalarOp> for ScalarForwardCallbacks {
     }
 }
 
+#[derive(Default)]
+struct CountingBackwardCallbacks {
+    linearize_calls: usize,
+    requested_slots: Vec<Vec<usize>>,
+}
+
+impl BackwardExecutor<ScalarOp> for CountingBackwardCallbacks {
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<ScalarOp>,
+        output_slots: &[usize],
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Arc<LinearizedGraph<ScalarOp>>> {
+        self.linearize_calls += 1;
+        self.requested_slots.push(output_slots.to_vec());
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
+    fn execute_forward(
+        &mut self,
+        graph: PrimitiveGraph<'_, ScalarOp>,
+        initial_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+    ) -> HashMap<ValueKey<ScalarOp>, Arc<f64>> {
+        let mut base = ScalarBackwardCallbacks;
+        base.execute_forward(graph, initial_data)
+    }
+
+    fn run_transposed_linear(
+        &mut self,
+        linear: &LinearizedGraph<ScalarOp>,
+        cotangent_out: &[Option<Arc<f64>>],
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
+        let mut base = ScalarBackwardCallbacks;
+        base.run_transposed_linear(linear, cotangent_out, external_data, ctx)
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        let mut base = ScalarBackwardCallbacks;
+        base.add_operands(a, b)
+    }
+}
+
+#[derive(Default)]
+struct CountingForwardCallbacks {
+    linearize_calls: usize,
+    requested_slots: Vec<Vec<usize>>,
+}
+
+impl ForwardExecutor<ScalarOp> for CountingForwardCallbacks {
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<ScalarOp>,
+        output_slots: &[usize],
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Arc<LinearizedGraph<ScalarOp>>> {
+        self.linearize_calls += 1;
+        self.requested_slots.push(output_slots.to_vec());
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
+    fn run_linearized_forward(
+        &mut self,
+        linear: &LinearizedGraph<ScalarOp>,
+        tangent_in: &[(ScalarKey, Option<Arc<f64>>)],
+        external_data: &HashMap<ValueKey<ScalarOp>, Arc<f64>>,
+        ctx: &mut <ScalarOp as Primitive>::ADContext,
+    ) -> tidu::ADRuleResult<Vec<Option<Arc<f64>>>> {
+        let mut base = ScalarForwardCallbacks;
+        base.run_linearized_forward(linear, tangent_in, external_data, ctx)
+    }
+
+    fn add_operands(&mut self, a: &Arc<f64>, b: &Arc<f64>) -> Arc<f64> {
+        let mut base = ScalarForwardCallbacks;
+        base.add_operands(a, b)
+    }
+}
+
 #[test]
 fn linear_transpose_with_builder_propagates_add_cotangents() {
     let mut builder = GraphBuilder::<ScalarOp>::new();
@@ -791,6 +870,41 @@ fn backward_accumulates_x_squared_gradient() {
     )
     .unwrap();
 
+    assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
+}
+
+#[test]
+fn backward_uses_executor_linearize_hook() {
+    let x_grad_key = ValueKey::Input(sk("x"));
+    let inputs = vec![
+        EagerInput {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        EagerInput {
+            key: x_grad_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let mut callbacks = CountingBackwardCallbacks::default();
+
+    let cotangents = eager::backward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        arc(1.0),
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap();
+
+    assert_eq!(callbacks.linearize_calls, 1);
+    assert_eq!(callbacks.requested_slots, vec![vec![0]]);
     assert_eq!(**cotangents.get(&x_grad_key).expect("gradient for x"), 6.0);
 }
 
@@ -899,6 +1013,43 @@ fn try_forward_accumulates_x_squared_tangent() {
     .unwrap()
     .expect("active output tangent");
 
+    assert_eq!(*tangent, 6.0);
+}
+
+#[test]
+fn try_forward_uses_executor_linearize_hook() {
+    let x_key = ValueKey::Input(sk("x"));
+    let inputs = vec![
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+        EagerInput {
+            key: x_key.clone(),
+            trace: None,
+            requires_grad: true,
+            data: arc(3.0),
+        },
+    ];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_scalar_op(&mut recorder, ScalarOp::Mul, &inputs, &[arc(9.0)]);
+    let tangent_seeds = HashMap::from([(x_key, arc(1.0))]);
+    let mut callbacks = CountingForwardCallbacks::default();
+
+    let tangent = eager::try_forward(
+        &outputs[0].key,
+        outputs[0].trace.as_ref(),
+        &tangent_seeds,
+        &mut callbacks,
+        &mut (),
+    )
+    .unwrap()
+    .expect("active output tangent");
+
+    assert_eq!(callbacks.linearize_calls, 1);
+    assert_eq!(callbacks.requested_slots, vec![vec![0]]);
     assert_eq!(*tangent, 6.0);
 }
 

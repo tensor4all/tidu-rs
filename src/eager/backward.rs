@@ -6,6 +6,7 @@ use computegraph::{GraphOperation, ValueKey};
 
 use crate::{LinearizedGraph, PrimitiveGraph};
 
+use super::record::RecordedGraph;
 use super::trace::{Trace, TraceNode};
 
 /// Downstream execution hooks for eager backward.
@@ -13,6 +14,20 @@ pub trait BackwardExecutor<Op: Primitive>
 where
     Op::InputKey: ADKey,
 {
+    /// Linearize one recorded eager graph node for the active output slots.
+    ///
+    /// The default implementation calls [`RecordedGraph::linearize`]. Runtime
+    /// owners may override this to memoize per-node transform results without
+    /// taking trace traversal ownership away from tidu.
+    fn linearize_recorded_graph(
+        &mut self,
+        graph: &RecordedGraph<Op>,
+        output_slots: &[usize],
+        ctx: &mut Op::ADContext,
+    ) -> ADRuleResult<Arc<LinearizedGraph<Op>>> {
+        graph.linearize(output_slots, ctx).map(Arc::new)
+    }
+
     /// Replay a primitive graph and return any concrete values needed by
     /// transpose execution.
     fn execute_forward(
@@ -68,11 +83,16 @@ where
             }
         }
 
-        let linear = node.computation().linearize(&active_output_slots, ctx)?;
+        let linear =
+            executor.linearize_recorded_graph(node.computation(), &active_output_slots, ctx)?;
         let replay_graph = PrimitiveGraph::new(linear.as_graph());
         let all_values = executor.execute_forward(replay_graph, node.saved_data());
-        let cotangent_in =
-            executor.run_transposed_linear(&linear, &active_cotangent_out, &all_values, ctx)?;
+        let cotangent_in = executor.run_transposed_linear(
+            linear.as_ref(),
+            &active_cotangent_out,
+            &all_values,
+            ctx,
+        )?;
 
         for (edge, maybe_cotangent) in node.input_edges().iter().zip(cotangent_in) {
             let Some(cotangent) = maybe_cotangent else {

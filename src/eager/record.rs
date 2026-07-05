@@ -268,7 +268,11 @@ impl<Op: Primitive> RecordedGraph<Op>
 where
     Op::InputKey: ADKey,
 {
-    pub(crate) fn linearize(
+    /// Linearize selected output slots of this recorded eager graph.
+    ///
+    /// Eager walkers call this through their executor hook. Runtime owners can
+    /// also use it as the cache-miss fallback when memoizing transform results.
+    pub fn linearize(
         &self,
         output_slots: &[usize],
         ctx: &mut Op::ADContext,

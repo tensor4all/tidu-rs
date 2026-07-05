@@ -469,6 +469,114 @@ fn recorded_graph_new_reports_mismatched_input_key_count() {
             actual: 1
         }
     ));
+    assert_eq!(
+        err.to_string(),
+        "RecordedGraph input keys expected 2 entries, got 1"
+    );
+}
+
+#[test]
+fn recorded_graph_new_reports_mismatched_output_key_count() {
+    let mut builder = computegraph::graph::GraphBuilder::<RecorderOp>::new();
+    let x = builder.add_input(Key::User("x".into()));
+    let out = builder.add_operation(
+        RecorderOp::Neg,
+        vec![ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(out);
+    let graph = Arc::new(builder.build());
+
+    let err = match RecordedGraph::new(graph, vec![Key::User("x".into())], Vec::new()) {
+        Ok(_) => panic!("RecordedGraph::new unexpectedly accepted mismatched output keys"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::CountMismatch {
+            field: "RecordedGraph output keys",
+            expected: 1,
+            actual: 0
+        }
+    ));
+}
+
+#[test]
+fn recorded_graph_new_reports_mismatched_input_key() {
+    let mut builder = computegraph::graph::GraphBuilder::<RecorderOp>::new();
+    let x = builder.add_input(Key::User("x".into()));
+    let out = builder.add_operation(
+        RecorderOp::Neg,
+        vec![ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(out.clone());
+    let graph = Arc::new(builder.build());
+    let output_keys = out
+        .iter()
+        .map(|output_id| graph.values()[*output_id].key.clone())
+        .collect();
+
+    let err = match RecordedGraph::new(graph, vec![Key::User("wrong".into())], output_keys) {
+        Ok(_) => panic!("RecordedGraph::new unexpectedly accepted mismatched input key"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::KeyMismatch {
+            field: "RecordedGraph input keys",
+            index: 0
+        }
+    ));
+    assert_eq!(
+        err.to_string(),
+        "RecordedGraph input keys does not match graph metadata at slot 0"
+    );
+}
+
+#[test]
+fn recorded_graph_new_reports_mismatched_output_key() {
+    let mut builder = computegraph::graph::GraphBuilder::<RecorderOp>::new();
+    let x = builder.add_input(Key::User("x".into()));
+    let out = builder.add_operation(
+        RecorderOp::Neg,
+        vec![ValueRef::Local(x)],
+        OperationRole::Primary,
+    );
+    builder.set_outputs(out);
+    let graph = Arc::new(builder.build());
+
+    let err = match RecordedGraph::new(
+        graph,
+        vec![Key::User("x".into())],
+        vec![ValueKey::Input(Key::User("wrong".into()))],
+    ) {
+        Ok(_) => panic!("RecordedGraph::new unexpectedly accepted mismatched output key"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::KeyMismatch {
+            field: "RecordedGraph output keys",
+            index: 0
+        }
+    ));
+}
+
+#[test]
+fn recorded_graph_from_primitive_exposes_underlying_graph() {
+    let recorded = RecordedGraph::from_primitive(
+        RecorderOp::Add,
+        vec![Key::User("x".into()), Key::User("y".into())],
+    )
+    .expect("primitive graph metadata should be valid");
+
+    assert_eq!(recorded.as_graph().operations().len(), 1);
+    assert_eq!(recorded.input_keys().len(), 2);
+    assert_eq!(recorded.output_keys().len(), 1);
 }
 
 #[test]
@@ -491,6 +599,50 @@ fn record_graph_reports_mismatched_input_count() {
             actual: 0
         }
     ));
+}
+
+#[test]
+fn record_graph_reports_mismatched_output_count() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let graph_inputs = recorder.fresh_input_keys::<RecorderOp>(1);
+    let graph = RecordedGraph::from_primitive(RecorderOp::Neg, graph_inputs)
+        .expect("test primitive graph metadata should be valid");
+    let input = eager_value("x", 1.0, true);
+
+    let err = match recorder.record_graph(graph, &[input], &[], HashMap::new()) {
+        Ok(_) => panic!("Recorder::record_graph unexpectedly accepted mismatched outputs"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(
+        err,
+        EagerRecordError::CountMismatch {
+            field: "Recorder::record_graph outputs",
+            expected: 1,
+            actual: 0
+        }
+    ));
+}
+
+#[test]
+fn recorder_exposes_underlying_key_source() {
+    let mut recorder = Recorder::new(TestKeySource::default());
+    recorder.key_source_mut().next = 7;
+
+    let key_source = recorder.into_key_source();
+
+    assert_eq!(key_source.next, 7);
+}
+
+#[test]
+fn record_graph_returns_untracked_outputs_when_no_inputs_require_grad() {
+    let inputs = vec![eager_value("x", 3.0, false), eager_value("y", 4.0, false)];
+    let mut recorder = Recorder::new(TestKeySource::default());
+    let outputs = record_op(&mut recorder, RecorderOp::Mul, &inputs, &[Arc::new(12.0)]);
+
+    assert_eq!(outputs.len(), 1);
+    assert!(!outputs[0].requires_grad);
+    assert!(outputs[0].trace.is_none());
 }
 
 #[test]
@@ -565,5 +717,18 @@ fn record_eager_multi_output_op_uses_one_node_and_seeds_nonzero_slot() {
                 ValueKey::Input(_) if **value == 3.0
             )),
         "saved forward data should include the input alias value"
+    );
+    assert!(
+        outputs[1]
+            .trace
+            .as_ref()
+            .expect("tracked multi-output trace")
+            .saved_values()
+            .iter()
+            .any(|(saved_key, value)| matches!(
+                saved_key,
+                ValueKey::Derived { output_slot: 1, .. } if **value == -3.0
+            )),
+        "trace saved values should expose retained forward data"
     );
 }

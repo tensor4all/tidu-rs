@@ -8,7 +8,9 @@ use computegraph::graph::{Graph, GraphBuilder};
 use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::GraphOperation;
-use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
+use tidu::{
+    ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveTransposeInput, PrimitiveValue,
+};
 
 define_ad_key!(CtxKey);
 
@@ -80,7 +82,7 @@ impl Primitive for CountingOp {
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        _inputs: &[PrimitiveValue<Self>],
+        _inputs: &[PrimitiveTransposeInput<Self>],
         _mode: &OperationRole,
         ctx: &mut CountingContext,
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {

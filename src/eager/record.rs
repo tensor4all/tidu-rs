@@ -404,7 +404,7 @@ impl<K> Recorder<K> {
     /// use std::sync::Arc;
     /// use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
     /// use tidu::{
-    ///     ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue,
+    ///     ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveTransposeInput, PrimitiveValue,
     /// };
     /// use tidu::eager::{EagerInput, KeySource, RecordedGraph, Recorder};
     ///
@@ -452,7 +452,7 @@ impl<K> Recorder<K> {
     ///         &self,
     ///         _builder: &mut impl PrimitiveBuilder<Self>,
     ///         cotangent_out: &[Option<LocalValueId>],
-    ///         _inputs: &[PrimitiveValue<Self>],
+    ///         _inputs: &[PrimitiveTransposeInput<Self>],
     ///         _role: &OperationRole,
     ///         _ctx: &mut (),
     ///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
@@ -582,7 +582,7 @@ fn fresh_value_keys<Op: GraphOperation>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DiffPassId, PrimitiveBuilder, PrimitiveValue};
+    use crate::{DiffPassId, PrimitiveBuilder, PrimitiveTransposeInput};
     use computegraph::LocalValueId;
 
     #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -641,7 +641,7 @@ mod tests {
             &self,
             _builder: &mut impl PrimitiveBuilder<Self>,
             cotangent_out: &[Option<LocalValueId>],
-            _inputs: &[PrimitiveValue<Self>],
+            _inputs: &[PrimitiveTransposeInput<Self>],
             _role: &OperationRole,
             _ctx: &mut (),
         ) -> ADRuleResult<Vec<Option<LocalValueId>>> {

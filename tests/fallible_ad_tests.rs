@@ -4,7 +4,7 @@ use std::sync::Arc;
 use computegraph::{GraphOperation, LocalValueId, OperationRole};
 use tidu::{
     linear_transpose, linear_transpose_with_builder, linearize, LinearizedGraph, PrimitiveBuilder,
-    PrimitiveValue,
+    PrimitiveTransposeInput, PrimitiveValue,
 };
 use tidu::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
 
@@ -97,7 +97,7 @@ impl Primitive for Op {
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        _inputs: &[PrimitiveValue<Self>],
+        _inputs: &[PrimitiveTransposeInput<Self>],
         _mode: &OperationRole,
         _ctx: &mut (),
     ) -> ADRuleResult<Vec<Option<LocalValueId>>> {

@@ -1,14 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::rules::{PrimitiveBuilder, PrimitiveValue};
-use crate::{
-    ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, LinearizedValueKind, Primitive,
-};
-use computegraph::graph::GraphBuilder;
+use crate::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
 use computegraph::resolve::{ResolvedView, ValueDef};
-use computegraph::{GraphOperation, LocalValueId, OperationKey, OperationRole, ValueKey, ValueRef};
+use computegraph::{GraphOperation, LocalValueId, OperationKey, ValueKey};
 
+use crate::split_builder::SplitGraphBuilder;
 use crate::LinearizedGraph;
 
 /// Linearize a resolved computation graph, producing a linear graph.
@@ -41,22 +38,18 @@ pub fn linearize<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    let mut builder = GraphBuilder::<Op>::new();
+    let mut builder = SplitGraphBuilder::<Op>::new();
     let topo_keys = topological_order(view, outputs, aliases);
     let mut tangent_env: HashMap<ValueKey<Op>, Option<LocalValueId>> = HashMap::new();
     let mut processed_ops = HashSet::new();
-    let mut value_kinds = Vec::new();
 
     let mut tangent_inputs = Vec::with_capacity(wrt.len());
     for wrt_key in wrt {
         let tangent_key = wrt_key.tangent_of(pass);
-        let tangent_id = builder.add_input(tangent_key);
-        debug_assert_eq!(tangent_id, value_kinds.len());
-        value_kinds.push(LinearizedValueKind::Linear {
-            primal: Some(ValueKey::Input(wrt_key.clone())),
-        });
-        tangent_env.insert(ValueKey::Input(wrt_key.clone()), Some(tangent_id));
-        tangent_inputs.push((wrt_key.clone(), tangent_id));
+        let (unified_id, linear_id) =
+            builder.add_linear_input(tangent_key, Some(ValueKey::Input(wrt_key.clone())));
+        tangent_env.insert(ValueKey::Input(wrt_key.clone()), Some(unified_id));
+        tangent_inputs.push((wrt_key.clone(), linear_id));
     }
 
     for key in topo_keys {
@@ -103,15 +96,16 @@ where
                     continue;
                 }
 
-                let mut primitive_builder =
-                    TrackingPrimitiveBuilder::new(&mut builder, &mut value_kinds);
                 let tangent_out = operation.jvp_rule(
-                    &mut primitive_builder,
+                    &mut builder,
                     &input_keys,
                     &output_keys,
                     &tangent_in,
                     ctx,
                 )?;
+                if let Some(err) = builder.take_error() {
+                    return Err(err);
+                }
                 if tangent_out.len() != output_keys.len() {
                     return Err(ADRuleError::invalid_input(
                         format!("{:?}", operation),
@@ -126,9 +120,7 @@ where
 
                 for (output_key, tangent_output) in output_keys.iter().zip(tangent_out) {
                     if let Some(tangent_id) = tangent_output {
-                        value_kinds[tangent_id] = LinearizedValueKind::Linear {
-                            primal: Some(output_key.clone()),
-                        };
+                        builder.set_linear_primal(tangent_id, output_key.clone())?;
                     }
                     tangent_env.insert(output_key.clone(), tangent_output);
                 }
@@ -138,78 +130,30 @@ where
 
     let tangent_outputs: Vec<Option<LocalValueId>> = outputs
         .iter()
-        .map(|key| tangent_env.get(key).copied().flatten())
-        .collect();
+        .map(|key| match tangent_env.get(key).copied().flatten() {
+            Some(unified_id) => builder
+                .linear_local_id(unified_id)
+                .ok_or_else(|| {
+                    ADRuleError::invalid_input(
+                        "tidu::linearize",
+                        ADRuleKind::Jvp,
+                        "JVP rule returned a residual value as an active requested tangent output",
+                    )
+                })
+                .map(Some),
+            None => Ok(None),
+        })
+        .collect::<ADRuleResult<Vec<_>>>()?;
     let active_outputs: Vec<LocalValueId> = tangent_outputs.iter().filter_map(|id| *id).collect();
-    if !active_outputs.is_empty() {
-        builder.set_outputs(active_outputs);
-    }
+    let (linear, residual, linear_primals) = builder.finish(active_outputs);
 
     Ok(LinearizedGraph::from_parts(
-        builder.build(),
+        linear,
+        residual,
         tangent_inputs,
         tangent_outputs,
-        value_kinds,
+        linear_primals,
     ))
-}
-
-struct TrackingPrimitiveBuilder<'a, Op: GraphOperation> {
-    inner: &'a mut GraphBuilder<Op>,
-    value_kinds: &'a mut Vec<LinearizedValueKind<Op>>,
-}
-
-impl<'a, Op: GraphOperation> TrackingPrimitiveBuilder<'a, Op> {
-    fn new(
-        inner: &'a mut GraphBuilder<Op>,
-        value_kinds: &'a mut Vec<LinearizedValueKind<Op>>,
-    ) -> Self {
-        Self { inner, value_kinds }
-    }
-
-    fn output_kind(
-        &self,
-        inputs: &[PrimitiveValue<Op>],
-        role: &OperationRole,
-    ) -> LinearizedValueKind<Op> {
-        let OperationRole::Linearized { active_mask } = role else {
-            return LinearizedValueKind::Residual;
-        };
-
-        if inputs.iter().enumerate().any(|(index, input)| {
-            active_mask.get(index).copied().unwrap_or(false) && self.is_linear_input(input)
-        }) {
-            LinearizedValueKind::Linear { primal: None }
-        } else {
-            LinearizedValueKind::Residual
-        }
-    }
-
-    fn is_linear_input(&self, input: &PrimitiveValue<Op>) -> bool {
-        match input {
-            PrimitiveValue::Local(id) => {
-                matches!(self.value_kinds[*id], LinearizedValueKind::Linear { .. })
-            }
-            PrimitiveValue::External(_) => true,
-        }
-    }
-}
-
-impl<Op: GraphOperation> PrimitiveBuilder<Op> for TrackingPrimitiveBuilder<'_, Op> {
-    fn add_primitive(
-        &mut self,
-        op: Op,
-        inputs: Vec<PrimitiveValue<Op>>,
-        role: OperationRole,
-    ) -> Vec<LocalValueId> {
-        let output_kind = self.output_kind(&inputs, &role);
-        let inputs = inputs.into_iter().map(ValueRef::from).collect();
-        let outputs = self.inner.add_operation(op, inputs, role);
-        for output_id in &outputs {
-            debug_assert_eq!(*output_id, self.value_kinds.len());
-            self.value_kinds.push(output_kind.clone());
-        }
-        outputs
-    }
 }
 
 fn output_keys<Op: GraphOperation>(

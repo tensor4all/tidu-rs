@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use computegraph::graph::GraphBuilder;
 use computegraph::resolve::resolve;
-use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
+use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey, ValueRef};
 use tidu::{
     linear_transpose, linearize, ADKey, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
     PrimitiveTransposeInput, PrimitiveValue,
@@ -28,6 +28,7 @@ impl ADKey for Key {
 enum Op {
     Add,
     Probe,
+    BadInactive,
     ResidualHelper,
     TangentHelper,
 }
@@ -40,7 +41,7 @@ impl GraphOperation for Op {
     fn input_count(&self) -> usize {
         match self {
             Self::Add => 2,
-            Self::Probe | Self::ResidualHelper | Self::TangentHelper => 1,
+            Self::Probe | Self::BadInactive | Self::ResidualHelper | Self::TangentHelper => 1,
         }
     }
 
@@ -70,10 +71,20 @@ impl Primitive for Op {
         _ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValueId>>> {
         match self {
-            Self::Probe => {
+            Self::Probe | Self::BadInactive => {
                 let Some(dx) = tangent_in[0] else {
                     return Ok(vec![None]);
                 };
+                if matches!(self, Self::BadInactive) {
+                    let leaked = builder.add_primitive(
+                        Self::TangentHelper,
+                        vec![PrimitiveValue::Local(dx)],
+                        OperationRole::Linearized {
+                            active_mask: vec![false],
+                        },
+                    )[0];
+                    return Ok(vec![Some(leaked)]);
+                }
                 let residual = builder.add_primitive(
                     Self::ResidualHelper,
                     vec![PrimitiveValue::External(primal_in[0].clone())],
@@ -129,21 +140,79 @@ impl Primitive for Op {
     }
 }
 
-#[test]
-fn linear_transpose_marks_residual_and_tangent_inputs_distinctly() {
+fn resolved_probe_graph(op: Op) -> (computegraph::resolve::ResolvedView<Op>, ValueKey<Op>, Key) {
     let mut builder = GraphBuilder::<Op>::new();
     let x_key = Key::User(0);
     let x = builder.add_input(x_key.clone());
-    let y = builder.add_operation(
-        Op::Probe,
-        vec![computegraph::ValueRef::Local(x)],
-        OperationRole::Primary,
-    )[0];
+    let y = builder.add_operation(op, vec![ValueRef::Local(x)], OperationRole::Primary)[0];
     builder.set_outputs(vec![y]);
     let graph = Arc::new(builder.build());
     let y_key = graph.values()[y].key.clone();
-    let view = resolve(vec![graph]);
+    (resolve(vec![graph]), y_key, x_key)
+}
 
+#[test]
+fn linearize_splits_residual_helpers_out_of_the_linear_graph() {
+    let (view, y_key, x_key) = resolved_probe_graph(Op::Probe);
+    let mut ctx = SeenTransposeInputs::default();
+
+    let linear = linearize(&view, &[y_key], &[x_key], 0, &mut ctx, &HashMap::new()).unwrap();
+
+    assert!(
+        linear
+            .residual_graph()
+            .operations()
+            .iter()
+            .any(|node| node.operation == Op::ResidualHelper),
+        "residual-only helper should be emitted to the residual graph"
+    );
+    assert!(
+        !linear
+            .as_graph()
+            .operations()
+            .iter()
+            .any(|node| node.operation == Op::ResidualHelper),
+        "linear graph must not retain residual-only helpers"
+    );
+
+    let add = linear
+        .as_graph()
+        .operations()
+        .iter()
+        .find(|node| node.operation == Op::Add)
+        .expect("linear graph should contain the tangent/residual join");
+    assert!(
+        matches!(add.inputs[0], ValueRef::External(_)),
+        "residual helper should be referenced by key from the linear graph: {:?}",
+        add.inputs
+    );
+    assert!(
+        matches!(add.inputs[1], ValueRef::Local(_)),
+        "tangent helper should remain local to the linear graph: {:?}",
+        add.inputs
+    );
+}
+
+#[test]
+fn linearize_rejects_tangent_flow_in_inactive_positions() {
+    let (view, y_key, x_key) = resolved_probe_graph(Op::BadInactive);
+    let mut ctx = SeenTransposeInputs::default();
+
+    let err = match linearize(&view, &[y_key], &[x_key], 0, &mut ctx, &HashMap::new()) {
+        Ok(_) => panic!("linearize should reject inactive tangent flow"),
+        Err(err) => err,
+    };
+
+    assert_eq!(err.rule(), tidu::ADRuleKind::Jvp);
+    assert!(
+        err.to_string().contains("inactive"),
+        "linearity violation should mention the inactive tangent operand: {err:?}"
+    );
+}
+
+#[test]
+fn linear_transpose_marks_residual_and_tangent_inputs_distinctly() {
+    let (view, y_key, x_key) = resolved_probe_graph(Op::Probe);
     let mut ctx = SeenTransposeInputs::default();
     let linear = linearize(&view, &[y_key], &[x_key], 0, &mut ctx, &HashMap::new()).unwrap();
     let _ = linear_transpose(&linear, &mut ctx).unwrap();

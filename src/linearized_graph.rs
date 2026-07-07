@@ -1,50 +1,53 @@
+use std::sync::Arc;
+
 use computegraph::graph::Graph;
 use computegraph::{GraphOperation, LocalValueId, ValueKey};
 
-/// Classification of a value inside a linearized graph.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum LinearizedValueKind<Op: GraphOperation> {
-    /// Value independent of differentiated tangent flow.
-    Residual,
-    /// Value on differentiated tangent flow.
-    Linear {
-        /// Primal value whose tangent this value represents, when known.
-        primal: Option<ValueKey<Op>>,
-    },
-}
-
 /// Graph produced by linearizing a primitive computation graph.
 pub struct LinearizedGraph<Op: GraphOperation> {
-    graph: Graph<Op>,
+    linear: Graph<Op>,
+    residual: Arc<Graph<Op>>,
     tangent_inputs: Vec<(Op::InputKey, LocalValueId)>,
     tangent_outputs: Vec<Option<LocalValueId>>,
-    value_kinds: Vec<LinearizedValueKind<Op>>,
+    linear_primals: Vec<Option<ValueKey<Op>>>,
 }
 
 impl<Op: GraphOperation> LinearizedGraph<Op> {
     pub(crate) fn from_parts(
-        graph: Graph<Op>,
+        linear: Graph<Op>,
+        residual: Arc<Graph<Op>>,
         tangent_inputs: Vec<(Op::InputKey, LocalValueId)>,
         tangent_outputs: Vec<Option<LocalValueId>>,
-        value_kinds: Vec<LinearizedValueKind<Op>>,
+        linear_primals: Vec<Option<ValueKey<Op>>>,
     ) -> Self {
-        debug_assert_eq!(graph.values().len(), value_kinds.len());
+        debug_assert_eq!(linear.values().len(), linear_primals.len());
         Self {
-            graph,
+            linear,
+            residual,
             tangent_inputs,
             tangent_outputs,
-            value_kinds,
+            linear_primals,
         }
     }
 
-    /// Borrow the lower-level graph representation.
+    /// Borrow the strictly-linear graph representation.
     pub fn as_graph(&self) -> &Graph<Op> {
-        &self.graph
+        &self.linear
     }
 
-    /// Consume this value and return the lower-level graph representation.
+    /// Borrow the residual graph referenced by the linear graph.
+    pub fn residual_graph(&self) -> &Graph<Op> {
+        &self.residual
+    }
+
+    /// Consume this value and return the strictly-linear graph representation.
     pub fn into_graph(self) -> Graph<Op> {
-        self.graph
+        self.linear
+    }
+
+    /// Consume this value and return both graph parts.
+    pub fn into_graphs(self) -> (Graph<Op>, Arc<Graph<Op>>) {
+        (self.linear, self.residual)
     }
 
     /// Tangent input keys and local value ids.
@@ -57,8 +60,7 @@ impl<Op: GraphOperation> LinearizedGraph<Op> {
         &self.tangent_outputs
     }
 
-    /// Return the classification for a local value in the linearized graph.
-    pub fn value_kind(&self, id: LocalValueId) -> &LinearizedValueKind<Op> {
-        &self.value_kinds[id]
+    pub(crate) fn linear_primal(&self, id: LocalValueId) -> Option<&ValueKey<Op>> {
+        self.linear_primals.get(id).and_then(Option::as_ref)
     }
 }

@@ -10,7 +10,9 @@ use computegraph::resolve::resolve;
 use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use num_complex::Complex64;
-use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
+use tidu::{
+    ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveTransposeInput, PrimitiveValue,
+};
 
 const TOL: f64 = 1e-10;
 const NUM_TOL: f64 = 1e-5;
@@ -115,7 +117,7 @@ impl Primitive for ComplexScalarOp {
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {

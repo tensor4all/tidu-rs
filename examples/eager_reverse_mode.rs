@@ -6,7 +6,7 @@ use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::eager::{self, BackwardExecutor, EagerInput, KeySource, RecordedGraph, Recorder};
 use tidu::{
     linear_transpose_with_builder, ADKey, ADRuleResult, DiffPassId, LinearizedGraph, Primitive,
-    PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
+    PrimitiveBuilder, PrimitiveGraph, PrimitiveTransposeInput, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -151,7 +151,7 @@ impl Primitive for ScalarOp {
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
@@ -390,7 +390,7 @@ fn sum_tangent_terms(
 
 fn transpose_mul(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
-    inputs: &[PrimitiveValue<ScalarOp>],
+    inputs: &[PrimitiveTransposeInput<ScalarOp>],
     ct: LocalValueId,
     role: &OperationRole,
 ) -> Vec<Option<LocalValueId>> {
@@ -402,7 +402,10 @@ fn transpose_mul(
     if active_mask[0] {
         let out = builder.add_primitive(
             ScalarOp::Mul,
-            vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
+            vec![
+                inputs[1].as_residual_value().unwrap(),
+                PrimitiveValue::Local(ct),
+            ],
             OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
@@ -412,7 +415,10 @@ fn transpose_mul(
     if active_mask[1] {
         let out = builder.add_primitive(
             ScalarOp::Mul,
-            vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
+            vec![
+                inputs[0].as_residual_value().unwrap(),
+                PrimitiveValue::Local(ct),
+            ],
             OperationRole::Linearized {
                 active_mask: vec![false, true],
             },

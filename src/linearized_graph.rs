@@ -1,11 +1,24 @@
 use computegraph::graph::Graph;
-use computegraph::{GraphOperation, LocalValueId};
+use computegraph::{GraphOperation, LocalValueId, ValueKey};
+
+/// Classification of a value inside a linearized graph.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LinearizedValueKind<Op: GraphOperation> {
+    /// Value independent of differentiated tangent flow.
+    Residual,
+    /// Value on differentiated tangent flow.
+    Linear {
+        /// Primal value whose tangent this value represents, when known.
+        primal: Option<ValueKey<Op>>,
+    },
+}
 
 /// Graph produced by linearizing a primitive computation graph.
 pub struct LinearizedGraph<Op: GraphOperation> {
     graph: Graph<Op>,
     tangent_inputs: Vec<(Op::InputKey, LocalValueId)>,
     tangent_outputs: Vec<Option<LocalValueId>>,
+    value_kinds: Vec<LinearizedValueKind<Op>>,
 }
 
 impl<Op: GraphOperation> LinearizedGraph<Op> {
@@ -13,11 +26,14 @@ impl<Op: GraphOperation> LinearizedGraph<Op> {
         graph: Graph<Op>,
         tangent_inputs: Vec<(Op::InputKey, LocalValueId)>,
         tangent_outputs: Vec<Option<LocalValueId>>,
+        value_kinds: Vec<LinearizedValueKind<Op>>,
     ) -> Self {
+        debug_assert_eq!(graph.values().len(), value_kinds.len());
         Self {
             graph,
             tangent_inputs,
             tangent_outputs,
+            value_kinds,
         }
     }
 
@@ -39,5 +55,10 @@ impl<Op: GraphOperation> LinearizedGraph<Op> {
     /// Tangent outputs aligned with requested primal outputs.
     pub fn tangent_outputs(&self) -> &[Option<LocalValueId>] {
         &self.tangent_outputs
+    }
+
+    /// Return the classification for a local value in the linearized graph.
+    pub fn value_kind(&self, id: LocalValueId) -> &LinearizedValueKind<Op> {
+        &self.value_kinds[id]
     }
 }

@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use computegraph::types::{LocalValueId, OperationRole, ValueKey};
 #[allow(unused_imports)]
-use tidu::PrimitiveValue;
+use tidu::{PrimitiveTransposeInput, PrimitiveValue};
 
 #[macro_export]
 macro_rules! linearize_add {

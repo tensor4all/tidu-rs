@@ -7,7 +7,7 @@ use tidu::rules::{
 };
 use tidu::{
     ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
-    PrimitiveValue,
+    PrimitiveTransposeInput, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -64,7 +64,7 @@ impl Primitive for AddOp {
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValueId>],
-        _inputs: &[PrimitiveValue<Self>],
+        _inputs: &[PrimitiveTransposeInput<Self>],
         _mode: &OperationRole,
         _ctx: &mut Self::ADContext,
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {

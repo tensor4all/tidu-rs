@@ -8,7 +8,9 @@ use computegraph::resolve::{resolve, ResolvedView};
 use computegraph::types::{LocalValueId, OperationRole, ValueKey};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::LinearizedGraph;
-use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
+use tidu::{
+    ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveTransposeInput, PrimitiveValue,
+};
 
 use crate::{
     define_ad_key, linearize_add, linearize_exp, linearize_mul, linearize_neg, transpose_add,
@@ -90,7 +92,7 @@ impl Primitive for ScalarOp {
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {

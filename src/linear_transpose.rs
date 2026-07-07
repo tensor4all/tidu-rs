@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::rules::GraphPrimitiveBuilder;
 use crate::{
-    ADKey, ADRuleError, ADRuleKind, ADRuleResult, Primitive, PrimitiveBuilder, PrimitiveValue,
+    ADKey, ADRuleError, ADRuleKind, ADRuleResult, LinearizedValueKind, Primitive, PrimitiveBuilder,
+    PrimitiveTransposeInput, PrimitiveValue,
 };
 use computegraph::graph::GraphBuilder;
 use computegraph::{LocalValueId, OperationRole, ValueKey, ValueRef};
@@ -33,6 +33,7 @@ where
     let mut cotangent_env: HashMap<ValueKey<Op>, LocalValueId> = HashMap::new();
     let mut cotangent_seed_inputs = Vec::new();
     let graph = linear.as_graph();
+    let mut value_kinds = Vec::new();
 
     for (index, maybe_tangent_output) in linear.tangent_outputs().iter().enumerate() {
         let tangent_output_id = match maybe_tangent_output {
@@ -43,6 +44,8 @@ where
         let source_key = graph.values()[*tangent_output_id].key.clone();
         let seed_key = cotangent_seed_key(linear, index)?;
         let seed_id = builder.add_input(seed_key.clone());
+        debug_assert_eq!(seed_id, value_kinds.len());
+        value_kinds.push(LinearizedValueKind::Linear { primal: None });
         cotangent_env.insert(source_key, seed_id);
         cotangent_seed_inputs.push((seed_key, seed_id));
     }
@@ -57,18 +60,13 @@ where
             continue;
         }
 
-        let rule_inputs: Vec<PrimitiveValue<Op>> = op_node
+        let rule_inputs: Vec<PrimitiveTransposeInput<Op>> = op_node
             .inputs
             .iter()
-            .map(|input| match input {
-                ValueRef::Local(local_id) => {
-                    PrimitiveValue::External(graph.values()[*local_id].key.clone())
-                }
-                ValueRef::External(key) => PrimitiveValue::External(key.clone()),
-            })
+            .map(|input| transpose_input_for(linear, input))
             .collect();
 
-        let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
+        let mut primitive_builder = TrackingPrimitiveBuilder::new(&mut builder, &mut value_kinds);
         let cotangent_in = op_node.operation.transpose_rule(
             &mut primitive_builder,
             &cotangent_out,
@@ -93,16 +91,12 @@ where
                 Some(cotangent_id) => cotangent_id,
                 None => continue,
             };
-            let input_key = match input {
-                PrimitiveValue::Local(_) => {
-                    unreachable!("rule inputs are normalized to external refs")
-                }
-                PrimitiveValue::External(key) => key.clone(),
-            };
+            let input_key = input.key().clone();
 
             match cotangent_env.get(&input_key).copied() {
                 Some(existing_id) => {
-                    let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
+                    let mut primitive_builder =
+                        TrackingPrimitiveBuilder::new(&mut builder, &mut value_kinds);
                     let sum = primitive_builder.add_primitive(
                         Op::add(),
                         vec![
@@ -139,6 +133,7 @@ where
         builder.build(),
         cotangent_seed_inputs,
         tangent_outputs,
+        value_kinds,
     ))
 }
 
@@ -174,15 +169,10 @@ where
             continue;
         }
 
-        let rule_inputs: Vec<PrimitiveValue<Op>> = op_node
+        let rule_inputs: Vec<PrimitiveTransposeInput<Op>> = op_node
             .inputs
             .iter()
-            .map(|input| match input {
-                ValueRef::Local(local_id) => {
-                    PrimitiveValue::External(graph.values()[*local_id].key.clone())
-                }
-                ValueRef::External(key) => PrimitiveValue::External(key.clone()),
-            })
+            .map(|input| transpose_input_for(linear, input))
             .collect();
 
         let cotangent_in = op_node.operation.transpose_rule(
@@ -209,12 +199,7 @@ where
                 Some(cotangent_id) => cotangent_id,
                 None => continue,
             };
-            let input_key = match input {
-                PrimitiveValue::Local(_) => {
-                    unreachable!("rule inputs are normalized to external refs")
-                }
-                PrimitiveValue::External(key) => key.clone(),
-            };
+            let input_key = input.key().clone();
 
             match cotangent_env.get(&input_key).copied() {
                 Some(existing_id) => {
@@ -245,6 +230,88 @@ where
             cotangent_env.get(tangent_input_key).copied()
         })
         .collect())
+}
+
+fn transpose_input_for<Op: Primitive>(
+    linear: &LinearizedGraph<Op>,
+    input: &ValueRef<Op>,
+) -> PrimitiveTransposeInput<Op>
+where
+    Op::InputKey: ADKey,
+{
+    let graph = linear.as_graph();
+    match input {
+        ValueRef::Local(local_id) => {
+            let key = graph.values()[*local_id].key.clone();
+            match linear.value_kind(*local_id) {
+                LinearizedValueKind::Residual => PrimitiveTransposeInput::Residual(key),
+                LinearizedValueKind::Linear { primal } => PrimitiveTransposeInput::Linear {
+                    key,
+                    primal: primal.clone(),
+                },
+            }
+        }
+        ValueRef::External(key) => PrimitiveTransposeInput::Residual(key.clone()),
+    }
+}
+
+struct TrackingPrimitiveBuilder<'a, Op: computegraph::GraphOperation> {
+    inner: &'a mut GraphBuilder<Op>,
+    value_kinds: &'a mut Vec<LinearizedValueKind<Op>>,
+}
+
+impl<'a, Op: computegraph::GraphOperation> TrackingPrimitiveBuilder<'a, Op> {
+    fn new(
+        inner: &'a mut GraphBuilder<Op>,
+        value_kinds: &'a mut Vec<LinearizedValueKind<Op>>,
+    ) -> Self {
+        Self { inner, value_kinds }
+    }
+
+    fn output_kind(
+        &self,
+        inputs: &[PrimitiveValue<Op>],
+        role: &OperationRole,
+    ) -> LinearizedValueKind<Op> {
+        let OperationRole::Linearized { active_mask } = role else {
+            return LinearizedValueKind::Residual;
+        };
+
+        if inputs.iter().enumerate().any(|(index, input)| {
+            active_mask.get(index).copied().unwrap_or(false) && self.is_linear_input(input)
+        }) {
+            LinearizedValueKind::Linear { primal: None }
+        } else {
+            LinearizedValueKind::Residual
+        }
+    }
+
+    fn is_linear_input(&self, input: &PrimitiveValue<Op>) -> bool {
+        match input {
+            PrimitiveValue::Local(id) => {
+                matches!(self.value_kinds[*id], LinearizedValueKind::Linear { .. })
+            }
+            PrimitiveValue::External(_) => true,
+        }
+    }
+}
+
+impl<Op: computegraph::GraphOperation> PrimitiveBuilder<Op> for TrackingPrimitiveBuilder<'_, Op> {
+    fn add_primitive(
+        &mut self,
+        op: Op,
+        inputs: Vec<PrimitiveValue<Op>>,
+        role: OperationRole,
+    ) -> Vec<LocalValueId> {
+        let output_kind = self.output_kind(&inputs, &role);
+        let inputs = inputs.into_iter().map(ValueRef::from).collect();
+        let outputs = self.inner.add_operation(op, inputs, role);
+        for output_id in &outputs {
+            debug_assert_eq!(*output_id, self.value_kinds.len());
+            self.value_kinds.push(output_kind.clone());
+        }
+        outputs
+    }
 }
 
 fn cotangent_seed_key<Op: Primitive>(

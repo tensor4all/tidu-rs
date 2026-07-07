@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use computegraph::types::OperationRole;
 #[allow(unused_imports)]
-use tidu::PrimitiveValue;
+use tidu::{PrimitiveTransposeInput, PrimitiveValue};
 
 #[macro_export]
 macro_rules! transpose_add {
@@ -19,9 +19,10 @@ macro_rules! transpose_mul_real {
         };
         let mut result = vec![None, None];
         if active_mask[0] {
+            let fixed = $inputs[1].as_residual_value().unwrap();
             let out = $builder.add_primitive(
                 $OpMul,
-                vec![$inputs[1].clone(), PrimitiveValue::Local($ct)],
+                vec![fixed, PrimitiveValue::Local($ct)],
                 OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
@@ -29,9 +30,10 @@ macro_rules! transpose_mul_real {
             result[0] = Some(out[0]);
         }
         if active_mask[1] {
+            let fixed = $inputs[0].as_residual_value().unwrap();
             let out = $builder.add_primitive(
                 $OpMul,
-                vec![$inputs[0].clone(), PrimitiveValue::Local($ct)],
+                vec![fixed, PrimitiveValue::Local($ct)],
                 OperationRole::Linearized {
                     active_mask: vec![false, true],
                 },
@@ -51,9 +53,10 @@ macro_rules! transpose_mul_complex {
         };
         let mut result = vec![None, None];
         if active_mask[0] {
+            let fixed = $inputs[1].as_residual_value().unwrap();
             let conj_fixed = $builder.add_primitive(
                 $OpConj,
-                vec![$inputs[1].clone()],
+                vec![fixed],
                 OperationRole::Linearized {
                     active_mask: vec![false],
                 },
@@ -71,9 +74,10 @@ macro_rules! transpose_mul_complex {
             result[0] = Some(out[0]);
         }
         if active_mask[1] {
+            let fixed = $inputs[0].as_residual_value().unwrap();
             let conj_fixed = $builder.add_primitive(
                 $OpConj,
-                vec![$inputs[0].clone()],
+                vec![fixed],
                 OperationRole::Linearized {
                     active_mask: vec![false],
                 },

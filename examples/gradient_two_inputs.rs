@@ -15,7 +15,7 @@ use computegraph::types::{LocalValueId, OperationRole, ValueKey, ValueRef};
 use computegraph::{EvaluableGraphOperation, GraphOperation};
 use tidu::{
     linear_transpose, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive, PrimitiveBuilder,
-    PrimitiveValue,
+    PrimitiveTransposeInput, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -122,7 +122,7 @@ impl Primitive for ScalarOp {
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
@@ -141,7 +141,10 @@ impl Primitive for ScalarOp {
                 if active_mask[0] {
                     let out = builder.add_primitive(
                         Self::Mul,
-                        vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
+                        vec![
+                            inputs[1].as_residual_value().unwrap(),
+                            PrimitiveValue::Local(ct),
+                        ],
                         OperationRole::Linearized {
                             active_mask: vec![false, true],
                         },
@@ -151,7 +154,10 @@ impl Primitive for ScalarOp {
                 if active_mask[1] {
                     let out = builder.add_primitive(
                         Self::Mul,
-                        vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
+                        vec![
+                            inputs[0].as_residual_value().unwrap(),
+                            PrimitiveValue::Local(ct),
+                        ],
                         OperationRole::Linearized {
                             active_mask: vec![false, true],
                         },

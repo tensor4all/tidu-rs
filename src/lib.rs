@@ -44,9 +44,9 @@ pub mod rules;
 
 pub use linear_transpose::{linear_transpose, linear_transpose_with_builder};
 pub use linearize::linearize;
-pub use linearized_graph::LinearizedGraph;
+pub use linearized_graph::{LinearizedGraph, LinearizedValueKind};
 pub use primitive_graph::PrimitiveGraph;
 pub use rules::{
     ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive, PrimitiveBuilder,
-    PrimitiveValue,
+    PrimitiveTransposeInput, PrimitiveValue,
 };

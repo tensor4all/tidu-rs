@@ -1,5 +1,4 @@
-use computegraph::graph::GraphBuilder;
-use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueRef};
+use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey, ValueRef};
 
 /// Reference to a value available to a primitive AD rule.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -8,6 +7,52 @@ pub enum PrimitiveValue<Op: GraphOperation> {
     Local(LocalValueId),
     /// Value from the source primitive computation graph.
     External(computegraph::ValueKey<Op>),
+}
+
+/// Input reference passed to a primitive transpose rule.
+///
+/// Linearized graphs contain both residual values and values that belong to
+/// the tangent flow. A transpose rule may freely use residual values as
+/// ordinary graph operands, but tangent-flow values must not be retained as
+/// tensor-valued operands in the transposed graph. When a tangent-flow value is
+/// the tangent of a known primal value, `primal` carries that counterpart for
+/// metadata or runtime-shape use by downstream primitive sets.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PrimitiveTransposeInput<Op: GraphOperation> {
+    /// Value that is independent of the differentiated tangent flow.
+    Residual(ValueKey<Op>),
+    /// Value on the differentiated tangent flow.
+    Linear {
+        /// Key of the linearized graph value.
+        key: ValueKey<Op>,
+        /// Primal value whose tangent this value represents, when known.
+        primal: Option<ValueKey<Op>>,
+    },
+}
+
+impl<Op: GraphOperation> PrimitiveTransposeInput<Op> {
+    /// Return the key of the linearized graph value.
+    pub fn key(&self) -> &ValueKey<Op> {
+        match self {
+            Self::Residual(key) | Self::Linear { key, .. } => key,
+        }
+    }
+
+    /// Return the corresponding primal key for a linear input, when known.
+    pub fn primal(&self) -> Option<&ValueKey<Op>> {
+        match self {
+            Self::Residual(_) => None,
+            Self::Linear { primal, .. } => primal.as_ref(),
+        }
+    }
+
+    /// Return this input as a value usable by rule builders when it is residual.
+    pub fn as_residual_value(&self) -> Option<PrimitiveValue<Op>> {
+        match self {
+            Self::Residual(key) => Some(PrimitiveValue::External(key.clone())),
+            Self::Linear { .. } => None,
+        }
+    }
 }
 
 impl<Op: GraphOperation> From<PrimitiveValue<Op>> for ValueRef<Op> {
@@ -37,26 +82,4 @@ pub trait PrimitiveBuilder<Op: GraphOperation> {
         inputs: Vec<PrimitiveValue<Op>>,
         role: OperationRole,
     ) -> Vec<LocalValueId>;
-}
-
-pub(crate) struct GraphPrimitiveBuilder<'a, Op: GraphOperation> {
-    inner: &'a mut GraphBuilder<Op>,
-}
-
-impl<'a, Op: GraphOperation> GraphPrimitiveBuilder<'a, Op> {
-    pub(crate) fn new(inner: &'a mut GraphBuilder<Op>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<Op: GraphOperation> PrimitiveBuilder<Op> for GraphPrimitiveBuilder<'_, Op> {
-    fn add_primitive(
-        &mut self,
-        op: Op,
-        inputs: Vec<PrimitiveValue<Op>>,
-        role: OperationRole,
-    ) -> Vec<LocalValueId> {
-        let inputs = inputs.into_iter().map(ValueRef::from).collect();
-        self.inner.add_operation(op, inputs, role)
-    }
 }

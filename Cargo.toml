@@ -13,6 +13,12 @@ categories = ["mathematics", "science"]
 
 [workspace]
 
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 

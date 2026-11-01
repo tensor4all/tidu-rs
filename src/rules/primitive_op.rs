@@ -1,4 +1,4 @@
-use super::{ADKey, ADRuleResult, PrimitiveBuilder, PrimitiveValue};
+use super::{ADKey, ADRuleResult, PrimitiveBuilder, PrimitiveTransposeInput};
 use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 
 /// Extends `GraphOperation` with primitive JVP and transpose rules for AD.
@@ -14,7 +14,9 @@ use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 ///
 /// ```
 /// use computegraph::{ValueKey, GraphOperation, LocalValueId, OperationRole};
-/// use tidu::{ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveValue};
+/// use tidu::{
+///     ADKey, DiffPassId, Primitive, PrimitiveBuilder, PrimitiveTransposeInput, PrimitiveValue,
+/// };
 ///
 /// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// enum Key { Base(String), Tan(Box<Key>, DiffPassId) }
@@ -48,7 +50,7 @@ use computegraph::{GraphOperation, LocalValueId, OperationRole, ValueKey};
 ///     }
 ///     fn transpose_rule(
 ///         &self, _builder: &mut impl PrimitiveBuilder<Self>,
-///         ct: &[Option<LocalValueId>], _i: &[PrimitiveValue<Self>], _m: &OperationRole,
+///         ct: &[Option<LocalValueId>], _i: &[PrimitiveTransposeInput<Self>], _m: &OperationRole,
 ///         _ctx: &mut (),
 ///     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
 ///         Ok(vec![ct[0], ct[0]])
@@ -95,7 +97,7 @@ where
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_outputs: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         ctx: &mut Self::ADContext,
     ) -> ADRuleResult<Vec<Option<LocalValueId>>>

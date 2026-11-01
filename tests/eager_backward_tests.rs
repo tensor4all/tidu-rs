@@ -11,7 +11,7 @@ use tidu::eager::{
 };
 use tidu::{
     linear_transpose_with_builder, linearize, ADKey, DiffPassId, LinearizedGraph, Primitive,
-    PrimitiveBuilder, PrimitiveGraph, PrimitiveValue,
+    PrimitiveBuilder, PrimitiveGraph, PrimitiveTransposeInput, PrimitiveValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -141,7 +141,7 @@ impl Primitive for ScalarOp {
         &self,
         builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        inputs: &[PrimitiveValue<Self>],
+        inputs: &[PrimitiveTransposeInput<Self>],
         role: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {
@@ -201,7 +201,7 @@ fn scalar_sum_terms(
 
 fn scalar_transpose_mul(
     builder: &mut impl PrimitiveBuilder<ScalarOp>,
-    inputs: &[PrimitiveValue<ScalarOp>],
+    inputs: &[PrimitiveTransposeInput<ScalarOp>],
     ct: LocalValueId,
     role: &OperationRole,
 ) -> Vec<Option<LocalValueId>> {
@@ -211,9 +211,10 @@ fn scalar_transpose_mul(
     };
     let mut result = vec![None, None];
     if active_mask[0] {
+        let fixed = inputs[1].as_residual_value().unwrap();
         let out = builder.add_primitive(
             ScalarOp::Mul,
-            vec![inputs[1].clone(), PrimitiveValue::Local(ct)],
+            vec![fixed, PrimitiveValue::Local(ct)],
             OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
@@ -221,9 +222,10 @@ fn scalar_transpose_mul(
         result[0] = Some(out[0]);
     }
     if active_mask[1] {
+        let fixed = inputs[0].as_residual_value().unwrap();
         let out = builder.add_primitive(
             ScalarOp::Mul,
-            vec![inputs[0].clone(), PrimitiveValue::Local(ct)],
+            vec![fixed, PrimitiveValue::Local(ct)],
             OperationRole::Linearized {
                 active_mask: vec![false, true],
             },
@@ -320,7 +322,7 @@ impl Primitive for TwoOutputOp {
         &self,
         _builder: &mut impl PrimitiveBuilder<Self>,
         cotangent_out: &[Option<LocalValueId>],
-        _inputs: &[PrimitiveValue<Self>],
+        _inputs: &[PrimitiveTransposeInput<Self>],
         _mode: &OperationRole,
         _ctx: &mut (),
     ) -> tidu::ADRuleResult<Vec<Option<LocalValueId>>> {

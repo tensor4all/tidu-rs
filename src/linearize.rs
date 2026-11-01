@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::rules::GraphPrimitiveBuilder;
 use crate::{ADKey, ADRuleError, ADRuleKind, ADRuleResult, DiffPassId, Primitive};
-use computegraph::graph::GraphBuilder;
 use computegraph::resolve::{ResolvedView, ValueDef};
 use computegraph::{GraphOperation, LocalValueId, OperationKey, ValueKey};
 
+use crate::split_builder::SplitGraphBuilder;
 use crate::LinearizedGraph;
 
 /// Linearize a resolved computation graph, producing a linear graph.
@@ -39,7 +38,7 @@ pub fn linearize<Op: Primitive>(
 where
     Op::InputKey: ADKey,
 {
-    let mut builder = GraphBuilder::<Op>::new();
+    let mut builder = SplitGraphBuilder::<Op>::new();
     let topo_keys = topological_order(view, outputs, aliases);
     let mut tangent_env: HashMap<ValueKey<Op>, Option<LocalValueId>> = HashMap::new();
     let mut processed_ops = HashSet::new();
@@ -47,9 +46,10 @@ where
     let mut tangent_inputs = Vec::with_capacity(wrt.len());
     for wrt_key in wrt {
         let tangent_key = wrt_key.tangent_of(pass);
-        let tangent_id = builder.add_input(tangent_key);
-        tangent_env.insert(ValueKey::Input(wrt_key.clone()), Some(tangent_id));
-        tangent_inputs.push((wrt_key.clone(), tangent_id));
+        let (unified_id, linear_id) =
+            builder.add_linear_input(tangent_key, Some(ValueKey::Input(wrt_key.clone())));
+        tangent_env.insert(ValueKey::Input(wrt_key.clone()), Some(unified_id));
+        tangent_inputs.push((wrt_key.clone(), linear_id));
     }
 
     for key in topo_keys {
@@ -96,14 +96,16 @@ where
                     continue;
                 }
 
-                let mut primitive_builder = GraphPrimitiveBuilder::new(&mut builder);
                 let tangent_out = operation.jvp_rule(
-                    &mut primitive_builder,
+                    &mut builder,
                     &input_keys,
                     &output_keys,
                     &tangent_in,
                     ctx,
                 )?;
+                if let Some(err) = builder.take_error() {
+                    return Err(err);
+                }
                 if tangent_out.len() != output_keys.len() {
                     return Err(ADRuleError::invalid_input(
                         format!("{:?}", operation),
@@ -116,8 +118,11 @@ where
                     ));
                 }
 
-                for (output_key, tangent_output) in output_keys.into_iter().zip(tangent_out) {
-                    tangent_env.insert(output_key, tangent_output);
+                for (output_key, tangent_output) in output_keys.iter().zip(tangent_out) {
+                    if let Some(tangent_id) = tangent_output {
+                        builder.set_linear_primal(tangent_id, output_key.clone())?;
+                    }
+                    tangent_env.insert(output_key.clone(), tangent_output);
                 }
             }
         }
@@ -125,17 +130,29 @@ where
 
     let tangent_outputs: Vec<Option<LocalValueId>> = outputs
         .iter()
-        .map(|key| tangent_env.get(key).copied().flatten())
-        .collect();
+        .map(|key| match tangent_env.get(key).copied().flatten() {
+            Some(unified_id) => builder
+                .linear_local_id(unified_id)
+                .ok_or_else(|| {
+                    ADRuleError::invalid_input(
+                        "tidu::linearize",
+                        ADRuleKind::Jvp,
+                        "JVP rule returned a residual value as an active requested tangent output",
+                    )
+                })
+                .map(Some),
+            None => Ok(None),
+        })
+        .collect::<ADRuleResult<Vec<_>>>()?;
     let active_outputs: Vec<LocalValueId> = tangent_outputs.iter().filter_map(|id| *id).collect();
-    if !active_outputs.is_empty() {
-        builder.set_outputs(active_outputs);
-    }
+    let (linear, residual, linear_primals) = builder.finish(active_outputs);
 
     Ok(LinearizedGraph::from_parts(
-        builder.build(),
+        linear,
+        residual,
         tangent_inputs,
         tangent_outputs,
+        linear_primals,
     ))
 }
 

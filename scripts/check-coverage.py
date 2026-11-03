@@ -79,7 +79,7 @@ def parse_dep_info_file(root: Path, path: Path) -> set[str]:
                 else:
                     dep_path = root_relative
             try:
-                rel = dep_path.relative_to(root)
+                rel = dep_path.resolve().relative_to(root.resolve())
             except ValueError:
                 continue
             if "src" not in rel.parts:
@@ -87,6 +87,10 @@ def parse_dep_info_file(root: Path, path: Path) -> set[str]:
             if "tests" in rel.parts:
                 continue
             if dep_path.suffix != ".rs":
+                continue
+            # Same rule as `scanned_source_files`: a `tests.rs` sibling holds
+            # tests only and is reported at 0% by the library profile.
+            if dep_path.name == "tests.rs":
                 continue
             if not has_runtime_code(dep_path):
                 continue
@@ -124,7 +128,11 @@ def main():
         cov_data = json.load(sys.stdin)
 
     files = cov_data["data"][0]["files"]
-    root_str = str(root) + "/"
+    # Resolve both sides before comparing: on macOS the temporary directory and
+    # TMPDIR are symlinked (`/var/...` vs `/private/var/...`), and llvm-cov can
+    # report either form. A literal prefix comparison then misses every file and
+    # reports them all as uncovered.
+    resolved_root = root.resolve()
     covered_files = set()
 
     failures = []
@@ -133,9 +141,9 @@ def main():
 
     for entry in files:
         abs_path = entry["filename"]
-        if abs_path.startswith(root_str):
-            rel_path = abs_path[len(root_str) :]
-        else:
+        try:
+            rel_path = str(Path(abs_path).resolve().relative_to(resolved_root))
+        except ValueError:
             rel_path = abs_path
 
         if rel_path in excluded_files:

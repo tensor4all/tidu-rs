@@ -49,6 +49,20 @@ jobs:
       - name: Run example tests
         run: cargo test --examples --workspace --release
 
+  scripts:
+    name: scripts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run script tests
+        # `check-coverage.py` is exercised on temporary directories, so this
+        # also runs on macOS, where TMPDIR is a symlinked path.
+        run: python3 -m unittest discover -s scripts/tests -v
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest

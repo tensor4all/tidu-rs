@@ -51,6 +51,11 @@ def scanned_source_files(root: Path) -> set[str]:
             continue
         if "tests" in rel.parts:
             continue
+        # Test-only modules moved out of `src` keep the `tests.rs` name. They are
+        # compiled only under `cfg(test)`, so the library profile reports them at
+        # 0% and would otherwise fail the threshold on every move.
+        if path.name == "tests.rs":
+            continue
         if not has_runtime_code(path):
             continue
         files.add(str(rel))
@@ -134,6 +139,12 @@ def main():
             rel_path = abs_path
 
         if rel_path in excluded_files:
+            skipped += 1
+            continue
+
+        # Test-only module files (see `scanned_source_files`): the library
+        # profile reports them at 0%, so they are not held to the threshold.
+        if Path(rel_path).name == "tests.rs":
             skipped += 1
             continue
 

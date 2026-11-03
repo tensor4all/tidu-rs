@@ -271,6 +271,82 @@ class CheckCoverageScriptTests(unittest.TestCase):
             )
             self.assertIn("demo-crate/src/lib.rs", result.stdout)
 
+    def test_ignores_test_only_module_files(self) -> None:
+        """A `tests.rs` sibling file holds tests only, so llvm-cov sees it at 0%.
+
+        Moving inline `mod tests { ... }` blocks into `src/.../tests.rs` must not
+        fail the threshold: the file is compiled only under `cfg(test)`.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "scripts").mkdir()
+            (root / "src" / "widget").mkdir(parents=True)
+            (root / "target" / "llvm-cov-target" / "debug" / "deps").mkdir(parents=True)
+            shutil.copy2(SOURCE_SCRIPT, root / "scripts" / "check-coverage.py")
+
+            (root / "coverage-thresholds.json").write_text(
+                json.dumps({"default": 85, "files": {}}),
+                encoding="utf-8",
+            )
+            (root / "src" / "lib.rs").write_text("pub mod widget;\n", encoding="utf-8")
+            (root / "src" / "widget.rs").write_text(
+                "#[cfg(test)]\nmod tests;\n", encoding="utf-8"
+            )
+            (root / "src" / "widget" / "tests.rs").write_text(
+                "use super::*;\n\n#[test]\nfn smoke() {}\n", encoding="utf-8"
+            )
+            (
+                root / "target" / "llvm-cov-target" / "debug" / "deps" / "demo.d"
+            ).write_text(
+                " ".join(
+                    [
+                        f"{root / 'target' / 'llvm-cov-target' / 'debug' / 'deps' / 'demo.d'}:",
+                        str(root / "src" / "lib.rs"),
+                        str(root / "src" / "widget.rs"),
+                        str(root / "src" / "widget" / "tests.rs"),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = {
+                "data": [
+                    {
+                        "files": [
+                            {
+                                "filename": str(root / "src" / "lib.rs"),
+                                "summary": {"lines": {"percent": 100.0}},
+                            },
+                            {
+                                "filename": str(root / "src" / "widget.rs"),
+                                "summary": {"lines": {"percent": 100.0}},
+                            },
+                            {
+                                "filename": str(root / "src" / "widget" / "tests.rs"),
+                                "summary": {"lines": {"percent": 0.0}},
+                            },
+                        ]
+                    }
+                ]
+            }
+            (root / "coverage.json").write_text(json.dumps(report), encoding="utf-8")
+
+            result = subprocess.run(
+                ["python3", "scripts/check-coverage.py", "coverage.json"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(
+                result.returncode,
+                0,
+                msg=f"expected success, got failure:\nstdout={result.stdout}\nstderr={result.stderr}",
+            )
+            self.assertNotIn("tests.rs", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

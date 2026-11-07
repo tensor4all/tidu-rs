@@ -1,3 +1,11 @@
+> **Archived — superseded.** tenferro's automatic differentiation lives in
+> `tenferro-ad` inside [tenferro-rs](https://github.com/tensor4all/tenferro-rs), which is the
+> implementation this repository was meant to be extracted *from*. That extraction was
+> considered and explicitly deferred (tenferro-rs#1695 → #974, "not now"), and the AD
+> vocabulary is now owned by tenferro rather than by a shared traits crate.
+> The published `tidu` crate stays installable; nothing here will receive changes.
+> See tidu-rs#48 for the decision and the crates.io check.
+
 # tidu-rs
 
 tidu builds automatic-differentiation transforms for primitive computation
